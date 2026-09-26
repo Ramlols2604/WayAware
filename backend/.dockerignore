@@ -1,0 +1,29 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files (secrets must be injected by the platform, not baked in)
+.env
+.env.*
+!.env.example
+
+# Caches and build artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.mypy_cache/
+
+# Tests (not needed at runtime)
+tests/
+
+# VCS and editor metadata
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Docs unrelated to the image
+README.md
