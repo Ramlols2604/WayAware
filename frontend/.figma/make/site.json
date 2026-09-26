@@ -1,0 +1,10 @@
+{
+  "description": "Navigate New York City safely with real-time crime awareness and historical incident data, empowering users to make informed travel decisions.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
