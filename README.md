@@ -55,3 +55,20 @@ next search — this matches Mapbox's session-based billing model.
 
 Both endpoints return a Mapbox `attribution` string that must be displayed
 alongside results.
+
+## Deployment (DigitalOcean App Platform)
+
+- **Source directory:** `backend/`
+- **Build:** Dockerfile (`backend/Dockerfile`) — App Platform detects and
+  builds it automatically; no buildpack configuration needed.
+- **HTTP port:** `8080` (App Platform's default expected port; the container
+  listens on `0.0.0.0:${PORT:-8080}`).
+- **Environment variables:** set `MAPBOX_ACCESS_TOKEN` as an **encrypted**
+  App Platform secret. It is only read server-side (`app/config.py`) and is
+  never sent to clients.
+- **Health check:** `GET /health` — already returns `{"status": "ok"}` with
+  no dependencies, so it can be used as-is as the App Platform health check
+  path.
+- **CORS:** not configured. Add `CORSMiddleware` (restricted to the exact
+  frontend origin, no wildcard) only if a browser-based frontend calls this
+  API cross-origin; a native mobile client does not need it.
