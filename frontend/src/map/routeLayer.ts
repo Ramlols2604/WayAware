@@ -2,9 +2,10 @@ import type { Map as MapLibreMap, GeoJSONSource, MapLayerMouseEvent } from 'mapl
 import type { ExposureLevel, LineStringGeometry } from '../types/api'
 
 const SOURCE_ID = 'wayaware-route'
-const LAYER_ID = 'wayaware-route-line'
+export const ROUTE_LINE_LAYER_ID = 'wayaware-route-line'
+const LAYER_ID = ROUTE_LINE_LAYER_ID
 const ALTERNATIVE_SOURCE_ID = 'wayaware-route-alternatives'
-const ALTERNATIVE_LAYER_ID = 'wayaware-route-alternatives-line'
+export const ALTERNATIVE_LAYER_ID = 'wayaware-route-alternatives-line'
 export const ROUTE_HIT_LAYER_ID = 'wayaware-route-hit'
 export const ALTERNATIVE_HIT_LAYER_ID = 'wayaware-route-alternatives-hit'
 
@@ -116,16 +117,13 @@ export function setAlternativeRoutes(map: MapLibreMap, routes: DrawnAlternative[
     },
     before,
   )
-  map.addLayer(
-    {
-      id: ALTERNATIVE_HIT_LAYER_ID,
-      type: 'line',
-      source: ALTERNATIVE_SOURCE_ID,
-      layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': '#000000', 'line-width': 22, 'line-opacity': 0.01 },
-    },
-    before,
-  )
+  map.addLayer({
+    id: ALTERNATIVE_HIT_LAYER_ID,
+    type: 'line',
+    source: ALTERNATIVE_SOURCE_ID,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#000000', 'line-width': 22, 'line-opacity': 0.01 },
+  })
 }
 
 export function alternativeIdFromClick(event: MapLayerMouseEvent) {

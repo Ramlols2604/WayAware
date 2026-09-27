@@ -36,6 +36,7 @@ export default function SettingsScreen({
           type="button"
           onClick={onBack}
           aria-label="Back"
+          data-focus-id="settings"
           className="absolute left-0 flex size-10 items-center justify-center rounded-full text-[var(--wa-text)] transition-colors hover:bg-[var(--wa-hover)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
         >
           <BackArrow />
@@ -116,6 +117,7 @@ export default function SettingsScreen({
           <button
             type="button"
             onClick={onPersonalInfo}
+            data-focus-id="settings-personal"
             className="flex w-full items-center gap-3 rounded-2xl border border-[var(--wa-border)] bg-[var(--wa-card)] px-4 py-3 text-left transition-colors hover:bg-[var(--wa-hover)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
           >
             <span className="flex size-9 items-center justify-center rounded-full bg-[var(--wa-icon-bg)] text-[var(--wa-text-muted)]">

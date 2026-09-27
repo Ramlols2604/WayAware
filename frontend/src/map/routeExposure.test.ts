@@ -7,7 +7,10 @@ import {
   COMPARISON_UNAVAILABLE_MESSAGE,
   NO_ALTERNATIVE_MESSAGE,
   NO_LOWER_EXPOSURE_MESSAGE,
+  chooseDisplayedRoute,
   comparisonIsCurrent,
+  distinctCandidateCount,
+  tripNotice,
   detourAllowanceSeconds,
   displayRouteCategories,
   displaySegmentCategories,
@@ -17,6 +20,8 @@ import {
   readStoredRoutePreference,
   rerouteId,
   selectionForSegmentTap,
+  writeStoredRoutePreference,
+  ROUTE_PREFERENCE_STORAGE_KEY,
 } from './routeExposure'
 
 function segment(id: string): ExposureSegment {
@@ -158,10 +163,52 @@ describe('route exposure state', () => {
     expect(COMPARISON_UNAVAILABLE_MESSAGE).toContain('unavailable')
   })
 
-  it('ignores a stale comparison result', () => {
-    expect(comparisonIsCurrent(2, 2, 'safest', 'safest')).toBe(true)
-    expect(comparisonIsCurrent(1, 2, 'safest', 'safest')).toBe(false)
-    expect(comparisonIsCurrent(2, 2, 'fastest', 'safest')).toBe(false)
+  it('keeps a manual reroute until the preference changes', () => {
+    const routes = [
+      { id: 'fast', durationSeconds: 600 },
+      { id: 'quiet', durationSeconds: 800 },
+    ]
+    const key = 'same-trip'
+    const safestChoice = { key, id: 'quiet', preference: 'safest' as const }
+    const fastestChoice = { key, id: 'fast', preference: 'fastest' as const }
+
+    const manualFast = { key, id: 'fast', preference: 'safest' as const }
+    expect(chooseDisplayedRoute(routes, key, 'safest', 'ready', [20, 5], safestChoice)).toBe('quiet')
+    expect(chooseDisplayedRoute(routes, key, 'safest', 'ready', [20, 5], manualFast)).toBe('fast')
+    expect(chooseDisplayedRoute(routes, key, 'safest', 'error', null, manualFast)).toBe('fast')
+    expect(chooseDisplayedRoute(routes, key, 'safest', 'loading', null, manualFast)).toBe('fast')
+    expect(chooseDisplayedRoute(routes, key, 'fastest', 'ready', [20, 5], fastestChoice)).toBe('fast')
+    expect(chooseDisplayedRoute(routes, key, 'fastest', 'ready', [1, 50], safestChoice)).toBe('fast')
+    expect(chooseDisplayedRoute(routes, key, 'safest', 'ready', [20, 5], fastestChoice)).toBe('quiet')
+    expect(chooseDisplayedRoute(routes, 'other-trip', 'safest', 'ready', [20, 5], manualFast)).toBe('quiet')
+    expect(chooseDisplayedRoute(routes, key, 'safest', 'loading', null, null)).toBe('fast')
+  })
+
+  it('shows route notices only for the current trip outcome', () => {
+    expect(distinctCandidateCount([[1], [1], [2]])).toBe(2)
+    const ready = { routeStatus: 'ready' as const, comparisonStatus: 'ready' as const, rerouteNotice: null }
+    expect(tripNotice({ ...ready, distinctCandidates: 2, comparisonStatus: 'error' })).toBe(COMPARISON_UNAVAILABLE_MESSAGE)
+    expect(tripNotice({ ...ready, distinctCandidates: 2, rerouteNotice: NO_ALTERNATIVE_MESSAGE })).toBeNull()
+    expect(tripNotice({ ...ready, distinctCandidates: 1 })).toBeNull()
+    expect(tripNotice({ ...ready, distinctCandidates: 1, rerouteNotice: NO_ALTERNATIVE_MESSAGE })).toBe(NO_ALTERNATIVE_MESSAGE)
+    expect(tripNotice({ ...ready, distinctCandidates: 2, rerouteNotice: NO_LOWER_EXPOSURE_MESSAGE })).toBe(NO_LOWER_EXPOSURE_MESSAGE)
+    expect(tripNotice({ ...ready, routeStatus: 'loading', distinctCandidates: 1, rerouteNotice: NO_ALTERNATIVE_MESSAGE })).toBeNull()
+    expect(tripNotice({ ...ready, routeStatus: 'error', distinctCandidates: 0 })).toBeNull()
+    expect(tripNotice({ ...ready, distinctCandidates: 1, comparisonStatus: 'error' })).toBeNull()
+  })
+
+  it('stores the preference separately from a trip', () => {
+    const writes: Array<[string, string]> = []
+    writeStoredRoutePreference(
+      { setItem: (key, value) => writes.push([key, value]) },
+      'fastest',
+    )
+    expect(writes).toEqual([[ROUTE_PREFERENCE_STORAGE_KEY, 'fastest']])
+  })
+
+  it('ignores a stale comparison result and keeps the current one after a preference change', () => {
+    expect(comparisonIsCurrent(2, 2)).toBe(true)
+    expect(comparisonIsCurrent(1, 2)).toBe(false)
   })
 
   it('opens details for red and yellow sections only', () => {

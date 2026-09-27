@@ -60,6 +60,7 @@ export default function WelcomeScreen({ onGetStarted }: WelcomeScreenProps) {
           <button
             type="button"
             onClick={onGetStarted}
+            data-focus-id="welcome"
             className="w-full rounded-2xl py-[17px] text-[1.05rem] font-bold tracking-wide text-white transition-all duration-150 focus-visible:ring-2 focus-visible:ring-[#60a5fa] focus-visible:ring-offset-2 focus-visible:ring-offset-transparent focus-visible:outline-none active:scale-[0.97]"
             style={{
               fontFamily: 'Outfit, sans-serif',

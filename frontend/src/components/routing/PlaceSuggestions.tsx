@@ -23,7 +23,6 @@ export default function PlaceSuggestions({ status, suggestions, onSelect, onRetr
         </button>
       )}
       {status === 'results' && (
-        <>
           <ul className="max-h-40 overflow-y-auto">
             {suggestions.map((suggestion) => (
               <li key={suggestion.mapboxId}>
@@ -45,12 +44,6 @@ export default function PlaceSuggestions({ status, suggestions, onSelect, onRetr
               </li>
             ))}
           </ul>
-          {suggestions[0]?.attribution && (
-            <p className="truncate border-t border-[var(--wa-line)] px-3 py-1.5 text-[0.68rem] text-[var(--wa-text-muted)]" style={inter} title={suggestions[0].attribution}>
-              {suggestions[0].attribution}
-            </p>
-          )}
-        </>
       )}
     </div>
   )

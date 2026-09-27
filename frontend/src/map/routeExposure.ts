@@ -1,4 +1,4 @@
-import type { ExposureCategoryCount, ExposureState, RouteExposureResult } from '../types/api'
+import type { ExposureCategoryCount, ExposureState, RouteExposureResult, RouteSafety } from '../types/api'
 
 export const ZERO_SEGMENT_MESSAGE =
   'No matching reports in the included categories and date window.'
@@ -24,6 +24,31 @@ export const NO_LOWER_EXPOSURE_MESSAGE =
   'No lower-exposure alternative found within the travel-time limit.'
 
 export const COMPARISON_UNAVAILABLE_MESSAGE = 'Route comparison is unavailable.'
+
+export function distinctCandidateCount(coordinates: unknown[]) {
+  return new Set(coordinates.map((item) => JSON.stringify(item))).size
+}
+
+/** Notice for the latest trip. A single candidate is quiet until the user asks to reroute. */
+export function tripNotice(input: {
+  routeStatus: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+  distinctCandidates: number
+  comparisonStatus: 'idle' | 'loading' | 'ready' | 'error'
+  rerouteNotice: string | null
+}) {
+  if (input.routeStatus !== 'ready') return null
+  if (input.distinctCandidates >= 2 && input.comparisonStatus === 'error') {
+    return COMPARISON_UNAVAILABLE_MESSAGE
+  }
+  if (input.rerouteNotice === NO_ALTERNATIVE_MESSAGE) {
+    return input.distinctCandidates < 2 ? NO_ALTERNATIVE_MESSAGE : null
+  }
+  if (input.rerouteNotice === NO_LOWER_EXPOSURE_MESSAGE && input.distinctCandidates >= 2) {
+    return NO_LOWER_EXPOSURE_MESSAGE
+  }
+  if (input.rerouteNotice === COMPARISON_UNAVAILABLE_MESSAGE) return COMPARISON_UNAVAILABLE_MESSAGE
+  return null
+}
 
 const DETOUR_FRACTION = 0.5
 const DETOUR_CAP_SECONDS = 10 * 60
@@ -92,13 +117,31 @@ export function rerouteId(routes: ChoiceRoute[], weights: Array<number | null> |
   return eligible[0].route.id
 }
 
-export function comparisonIsCurrent(
-  requestId: number,
-  activeRequestId: number,
-  requestPreference: string,
-  activePreference: string,
+export function chooseDisplayedRoute(
+  routes: ChoiceRoute[],
+  routeKey: string,
+  routePreference: RouteSafety,
+  comparisonStatus: 'idle' | 'loading' | 'ready' | 'error',
+  comparisonWeights: Array<number | null> | null,
+  manualChoice: { key: string; id: string; preference: RouteSafety } | null,
 ) {
-  return requestId === activeRequestId && requestPreference === activePreference
+  if (!routes.length) return null
+  if (
+    manualChoice?.key === routeKey &&
+    manualChoice.preference === routePreference &&
+    routes.some((route) => route.id === manualChoice.id)
+  ) {
+    return manualChoice.id
+  }
+  if (routePreference === 'fastest' || comparisonStatus !== 'ready' || !comparisonWeights) {
+    return fastestRouteId(routes)
+  }
+  return lowerExposureRouteId(routes, comparisonWeights) ?? fastestRouteId(routes)
+}
+
+/** Comparison weights describe the routes. A newer request is stale; Fastest/Safest is not. */
+export function comparisonIsCurrent(requestId: number, activeRequestId: number) {
+  return requestId === activeRequestId
 }
 
 const ROUTE_SUMMARY_LIMIT = 5

@@ -1,4 +1,3 @@
-import type { Ref } from 'react'
 import type { RouteAlternative } from '../../types/api'
 import { ROUTE_SUMMARY_LABEL } from '../../map/routeExposure'
 
@@ -9,24 +8,20 @@ type RoutePanelProps = {
   status: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
   routes: RouteAlternative[]
   selectedId: string | null
+  onSelect: (routeId: string) => void
   onRetry: () => void
   onOpenSummary: () => void
-  panelRef?: Ref<HTMLDivElement>
 }
 
-export default function RoutePanel({ status, routes, selectedId, onRetry, onOpenSummary, panelRef }: RoutePanelProps) {
+export default function RoutePanel({ status, routes, selectedId, onSelect, onRetry, onOpenSummary }: RoutePanelProps) {
   if (status === 'idle') return null
   const selected = routes.find((route) => route.id === selectedId) ?? routes[0]
   const box = 'rounded-3xl border border-[var(--wa-line)] bg-[var(--wa-card)] shadow-[var(--wa-sheet-shadow)]'
 
   return (
     <div
-      ref={panelRef}
-      className="pointer-events-auto absolute inset-x-3 z-20 grid items-stretch gap-2"
-      style={{
-        bottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))',
-        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 3fr)',
-      }}
+      className="pointer-events-auto grid w-full items-stretch gap-2"
+      style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 3fr)' }}
     >
       {status === 'loading' && <p className={`${box} col-span-2 px-4 py-2.5 text-[0.95rem] leading-5 font-semibold text-[var(--wa-text)]`} style={outfit}>Finding your route…</p>}
       {status === 'empty' && <p className={`${box} col-span-2 px-4 py-2.5 text-[0.95rem] leading-5 font-semibold text-[var(--wa-text)]`} style={outfit}>No route available for this trip.</p>}
@@ -37,6 +32,29 @@ export default function RoutePanel({ status, routes, selectedId, onRetry, onOpen
       )}
       {status === 'ready' && selected && (
         <>
+          {routes.length > 1 && (
+            <div className="col-span-2 flex gap-2" role="group" aria-label="Routes">
+              {routes.map((route, index) => {
+                const label = String.fromCharCode(65 + index)
+                const selectedRoute = route.id === selectedId
+                return (
+                  <button
+                    key={route.id}
+                    type="button"
+                    aria-pressed={selectedRoute}
+                    aria-label={`Route ${label}`}
+                    onClick={() => onSelect(route.id)}
+                    className={`${box} flex-1 px-3 py-2 text-[0.95rem] font-semibold focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none ${
+                      selectedRoute ? 'ring-2 ring-[#3b82f6]' : ''
+                    }`}
+                    style={outfit}
+                  >
+                    {label} · {formatDuration(route.durationSeconds)}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           <div className={`${box} flex flex-col items-center justify-center px-3 py-3.5 text-center`}>
             <p className="text-[1.05rem] leading-6 font-semibold text-[var(--wa-text)]" style={outfit}>
               {formatDuration(selected.durationSeconds)}

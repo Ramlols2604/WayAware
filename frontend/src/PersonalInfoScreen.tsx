@@ -22,6 +22,7 @@ export default function PersonalInfoScreen({ profile, onChange, onBack }: Person
           type="button"
           onClick={onBack}
           aria-label="Back"
+          data-focus-id="personal-info"
           className="absolute left-0 flex size-10 items-center justify-center rounded-full text-[var(--wa-text)] transition-colors hover:bg-[var(--wa-hover)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
         >
           <BackArrow />

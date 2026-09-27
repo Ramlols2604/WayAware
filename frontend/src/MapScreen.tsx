@@ -7,7 +7,9 @@ import RoutePanel from './components/routing/RoutePanel'
 import TravelModeSelector from './components/routing/TravelModeSelector'
 import {
   ALTERNATIVE_HIT_LAYER_ID,
+  ALTERNATIVE_LAYER_ID,
   ROUTE_HIT_LAYER_ID,
+  ROUTE_LINE_LAYER_ID,
   alternativeIdFromClick,
   fitRoute,
   segmentHitFromClick,
@@ -28,16 +30,17 @@ import {
   applyExposureError,
   applyExposureResponse,
   beginExposureRequest,
+  chooseDisplayedRoute,
   comparisonIsCurrent,
+  distinctCandidateCount,
   displayRouteCategories,
   displaySegmentCategories,
   exposureForRoute,
   exposureLevelLabel,
-  fastestRouteId,
   idleExposure,
-  lowerExposureRouteId,
   rerouteId,
   selectionForSegmentTap,
+  tripNotice,
 } from './map/routeExposure'
 import { useRoutePlaces } from './routing/usePlaceSearch'
 import { requestRouteComparison, requestRouteExposure, requestRoutes } from './api/wayawareApi'
@@ -53,28 +56,6 @@ function isInNyc(lat: number, lng: number) {
 
 function comparisonKey(routes: RouteAlternative[]) {
   return routes.map((route) => JSON.stringify(route.geometry.coordinates)).join('|')
-}
-
-function chooseDisplayedRoute(
-  routes: RouteAlternative[],
-  routeKey: string,
-  routePreference: RouteSafety,
-  comparisonStatus: 'idle' | 'loading' | 'ready' | 'error',
-  comparisonWeights: number[] | null,
-  manualChoice: { key: string; id: string; preference: RouteSafety } | null,
-) {
-  if (!routes.length) return null
-  if (
-    manualChoice?.key === routeKey &&
-    manualChoice.preference === routePreference &&
-    routes.some((route) => route.id === manualChoice.id)
-  ) {
-    return manualChoice.id
-  }
-  if (routePreference === 'fastest' || comparisonStatus !== 'ready' || !comparisonWeights) {
-    return fastestRouteId(routes)
-  }
-  return lowerExposureRouteId(routes, comparisonWeights) ?? fastestRouteId(routes)
 }
 
 function userHtml() {
@@ -130,6 +111,8 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
   const [comparisonWeights, setComparisonWeights] = useState<number[] | null>(null)
   const [comparisonStatus, setComparisonStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [buttonNotice, setButtonNotice] = useState<{ key: string; text: string } | null>(null)
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null)
+  const [tripEpoch, setTripEpoch] = useState('')
   const [exposure, setExposure] = useState<ExposureState>(idleExposure)
   const [user, setUser] = useState(MANHATTAN)
   const [mapReady, setMapReady] = useState(false)
@@ -142,8 +125,7 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
   const exposureRequestId = useRef(0)
   const comparisonRequestId = useRef(0)
   const loadedComparisonKey = useRef<string | null>(null)
-  const preferenceRef = useRef(routePreference)
-  preferenceRef.current = routePreference
+  const framedTrip = useRef('')
 
   useEffect(() => {
     if (!navigator.geolocation) return
@@ -166,11 +148,32 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
   const tappedSegment = visibleExposure.segments.find((segment) => segment.id === visibleExposure.selectedId) ?? null
   const selectedSegment = tappedSegment && tappedSegment.level !== 'lower' ? tappedSegment : null
   const summaryVisible = summaryOpen && visibleExposure.routeId === selectedRoute?.id
-  const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
+  const placeAttributions = [...new Set(
+    [
+      places.origin.place?.attribution,
+      places.destination.place?.attribution,
+      places.origin.suggestions[0]?.attribution,
+      places.destination.suggestions[0]?.attribution,
+    ].filter((value): value is string => Boolean(value)),
+  )]
 
   const routeQueryKey = places.origin.place && places.destination.place
     ? `${places.origin.place.longitude},${places.origin.place.latitude}|${places.destination.place.longitude},${places.destination.place.latitude}|${travelMode}`
     : ''
+  if (tripEpoch !== routeQueryKey) {
+    setTripEpoch(routeQueryKey)
+    framedTrip.current = ''
+    setRoutes([])
+    setSelectedRouteId(null)
+    setSummaryOpen(false)
+    setManualChoice(null)
+    setButtonNotice(null)
+    setDismissedNotice(null)
+    setComparisonWeights(null)
+    setComparisonStatus('idle')
+    setExposure(idleExposure)
+    setRouteStatus(routeQueryKey ? 'loading' : 'idle')
+  }
 
   useEffect(() => {
     const originPlace = places.origin.place
@@ -187,6 +190,9 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
     setRoutes([])
     setSelectedRouteId(null)
     setSummaryOpen(false)
+    setManualChoice(null)
+    setButtonNotice(null)
+    setDismissedNotice(null)
     setRouteStatus('loading')
     requestRoutes({
       origin: { longitude: originPlace.longitude, latitude: originPlace.latitude },
@@ -211,11 +217,6 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
 
   const routeKey = comparisonKey(routes)
 
-  useEffect(() => {
-    if (!active) return
-    mapRef.current?.resize()
-  }, [active, mapReady])
-
   const chosenRouteId = chooseDisplayedRoute(
     routes,
     routeKey,
@@ -224,17 +225,18 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
     comparisonWeights,
     manualChoice,
   )
-  if (chosenRouteId !== selectedRouteId) setSelectedRouteId(chosenRouteId)
+  if (tripEpoch === routeQueryKey && chosenRouteId !== selectedRouteId) setSelectedRouteId(chosenRouteId)
 
-  const noticeKey = `${routePreference}:${routeKey}`
-  const routeNotice =
-    comparisonStatus === 'error'
-      ? COMPARISON_UNAVAILABLE_MESSAGE
-      : buttonNotice?.key === noticeKey
-        ? buttonNotice.text
-        : routes.length === 1
-          ? NO_ALTERNATIVE_MESSAGE
-          : null
+  const noticeKey = routeKey
+  const distinctCandidates = distinctCandidateCount(routes.map((route) => route.geometry.coordinates))
+  const routeNotice = tripNotice({
+    routeStatus,
+    distinctCandidates,
+    comparisonStatus,
+    rerouteNotice: buttonNotice?.key === noticeKey ? buttonNotice.text : null,
+  })
+  const noticeId = routeNotice ? `${noticeKey}:${routeNotice}` : null
+  const visibleNotice = noticeId && dismissedNotice !== noticeId ? routeNotice : null
 
   useEffect(() => {
     if (routes.length < 2) {
@@ -248,7 +250,6 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
     loadedComparisonKey.current = null
     const requestId = comparisonRequestId.current + 1
     comparisonRequestId.current = requestId
-    const requestedPreference = routePreference
     const controller = new AbortController()
     setComparisonWeights(null)
     setComparisonStatus('loading')
@@ -257,16 +258,7 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
       controller.signal,
     )
       .then((weights) => {
-        if (
-          !comparisonIsCurrent(
-            requestId,
-            comparisonRequestId.current,
-            requestedPreference,
-            preferenceRef.current,
-          )
-        ) {
-          return
-        }
+        if (!comparisonIsCurrent(requestId, comparisonRequestId.current)) return
         loadedComparisonKey.current = routeKey
         setComparisonWeights(weights)
         setComparisonStatus('ready')
@@ -278,7 +270,7 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
         setComparisonStatus('error')
       })
     return () => controller.abort()
-  }, [routeKey, routePreference, routes])
+  }, [routeKey, routes])
 
   useEffect(() => {
     setSummaryOpen(false)
@@ -324,7 +316,8 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
 
   function findLowerExposureRoute() {
     if (comparisonStatus === 'loading') return
-    if (!selectedRoute || routes.length < 2) {
+    setDismissedNotice(null)
+    if (!selectedRoute || distinctCandidates < 2) {
       setButtonNotice({ key: noticeKey, text: NO_ALTERNATIVE_MESSAGE })
       return
     }
@@ -386,7 +379,7 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
           setRouteSegments(loaded, null)
           setAlternativeRoutes(loaded, [])
           loaded.on('click', ALTERNATIVE_HIT_LAYER_ID, (event) => {
-            if (loaded.queryRenderedFeatures(event.point, { layers: [ROUTE_HIT_LAYER_ID] }).length) return
+            if (loaded.queryRenderedFeatures(event.point, { layers: [ROUTE_LINE_LAYER_ID] }).length) return
             const routeId = alternativeIdFromClick(event)
             if (!routeId) return
             ignoreMapClick.current = true
@@ -399,6 +392,9 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
             loaded.getCanvas().style.cursor = ''
           })
           loaded.on('click', ROUTE_HIT_LAYER_ID, (event) => {
+            const onSelectedLine = loaded.queryRenderedFeatures(event.point, { layers: [ROUTE_LINE_LAYER_ID] }).length > 0
+            const onAlternativeLine = loaded.queryRenderedFeatures(event.point, { layers: [ALTERNATIVE_LAYER_ID] }).length > 0
+            if (onAlternativeLine && !onSelectedLine) return
             const hit = segmentHitFromClick(event)
             if (!hit) return
             ignoreMapClick.current = true
@@ -462,24 +458,37 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
   }, [mapReady, user])
 
   useEffect(() => {
+    if (manualChoice && manualChoice.preference !== routePreference) setManualChoice(null)
+  }, [manualChoice, routePreference])
+
+  useEffect(() => {
+    if (!active || !mapReady) return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const timer = window.setTimeout(() => mapRef.current?.resize(), reduceMotion ? 0 : 200)
+    return () => window.clearTimeout(timer)
+  }, [active, mapReady])
+
+  useEffect(() => {
+    if (!active) return
     const map = mapRef.current
-    if (!map || !mapReady || !selectedRoute || routeQueryRef.current !== routeQueryKey) return
-    const geometry = selectedRoute.geometry
+    if (!map || !mapReady) return
+    const geometry = selectedRoute?.geometry
+    if (!geometry || !routeQueryKey || routeQueryRef.current !== routeQueryKey || framedTrip.current === routeQueryKey) return
     const origin = places.origin.place
     const destination = places.destination.place
     const endpoints: [number, number][] = []
     if (origin) endpoints.push([origin.longitude, origin.latitude])
     if (destination) endpoints.push([destination.longitude, destination.latitude])
+    const others = routes.flatMap((route) => (route.id === selectedRoute?.id ? [] : route.geometry.coordinates))
     const frame = requestAnimationFrame(() => {
       const current = mapRef.current
-      if (!current || routeQueryRef.current !== routeQueryKey) return
-      const others = routes.flatMap((route) =>
-        route.id === selectedRoute.id ? [] : route.geometry.coordinates,
-      )
+      if (!current) return
+      framedTrip.current = routeQueryKey
+      current.resize()
       fitRoute(current, geometry, endpoints, framePadding(current, searchRef.current, panelRef.current), others)
     })
     return () => cancelAnimationFrame(frame)
-  }, [mapReady, places.destination.place, places.origin.place, routeQueryKey, routes, selectedRoute])
+  }, [active, mapReady, places.destination.place, places.origin.place, routeQueryKey, routes, selectedRoute])
 
   useEffect(() => {
     const map = mapRef.current
@@ -589,15 +598,6 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
                 />
               </div>
               <TravelModeSelector mode={travelMode} onChange={setTravelMode} />
-              {selectedPlaceAttribution && (
-                <p
-                  className="mt-1 truncate text-[0.68rem] text-[var(--wa-text-muted)]"
-                  style={inter}
-                  title={selectedPlaceAttribution}
-                >
-                  {selectedPlaceAttribution}
-                </p>
-              )}
             </div>
             <button
               type="button"
@@ -612,69 +612,98 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
             type="button"
             onClick={onOpenSettings}
             aria-label="Settings"
+            data-focus-id="map-gear"
             className="flex size-12 shrink-0 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[var(--wa-gear)] shadow-[var(--wa-float-shadow)] transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
           >
             <GearIcon />
           </button>
         </div>
 
-        {selectedRoute && routeNotice && (
-          <p
-            role="status"
-            className="pointer-events-auto absolute right-20 left-3 z-20 rounded-2xl border border-[var(--wa-line)] bg-[var(--wa-card)] px-3 py-2 text-[0.82rem] leading-snug text-[var(--wa-text)] shadow-[var(--wa-float-shadow)]"
-            style={{
-              ...inter,
-              bottom: summaryVisible || selectedSegment
-                ? 'calc(21.5rem + 3.25rem)'
-                : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 12.875rem)',
-            }}
+        {!summaryVisible && !selectedSegment && (
+          <div
+            ref={panelRef}
+            className="pointer-events-none absolute inset-x-3 z-20 flex flex-col gap-2"
+            style={{ bottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
           >
-            {routeNotice}
-          </p>
+            <div className="flex items-end justify-end gap-2">
+              {selectedRoute && visibleNotice && (
+                <div
+                  role="status"
+                  className="pointer-events-auto mr-auto flex min-w-0 flex-1 items-start gap-2 rounded-2xl border border-[var(--wa-line)] bg-[var(--wa-card)] px-3 py-2 text-[0.82rem] leading-snug text-[var(--wa-text)] shadow-[var(--wa-float-shadow)]"
+                  style={inter}
+                >
+                  <p className="min-w-0 flex-1">{visibleNotice}</p>
+                  <button
+                    type="button"
+                    aria-label="Dismiss notice"
+                    onClick={() => setDismissedNotice(noticeId)}
+                    className="shrink-0 rounded-full px-1 text-[1rem] leading-none text-[var(--wa-text-muted)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+              <div className="pointer-events-auto flex shrink-0 flex-col gap-2">
+                {selectedRoute && (
+                  <button
+                    type="button"
+                    onClick={findLowerExposureRoute}
+                    disabled={comparisonStatus === 'loading'}
+                    aria-busy={comparisonStatus === 'loading'}
+                    aria-label="Find a lower-exposure route"
+                    className="flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none disabled:opacity-60"
+                  >
+                    <RerouteIcon />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={recenter}
+                  aria-label="Recenter on your location"
+                  className="flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
+                >
+                  <LocateIcon />
+                </button>
+              </div>
+            </div>
+            <RoutePanel
+              status={routeStatus}
+              routes={routes}
+              selectedId={selectedRouteId}
+              onSelect={(routeId) => selectDrawnRoute.current(routeId)}
+              onRetry={() => setRouteAttempt((attempt) => attempt + 1)}
+              onOpenSummary={() => {
+                setExposure((current) => ({ ...current, selectedId: null }))
+                setSummaryOpen(true)
+              }}
+            />
+            <MapCredits attributions={placeAttributions} />
+          </div>
         )}
 
-        {selectedRoute && (
+        {(summaryVisible || selectedSegment) && selectedRoute && (
           <button
             type="button"
             onClick={findLowerExposureRoute}
             disabled={comparisonStatus === 'loading'}
             aria-busy={comparisonStatus === 'loading'}
             aria-label="Find a lower-exposure route"
-            className={`pointer-events-auto absolute right-3 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none disabled:opacity-60 ${
-              summaryVisible || selectedSegment ? 'bottom-[21.5rem]' : ''
-            }`}
-            style={
-              summaryVisible || selectedSegment
-                ? undefined
-                : {
-                    bottom: 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 9.625rem)',
-                  }
-            }
+            className="pointer-events-auto absolute right-3 bottom-[21.5rem] flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none disabled:opacity-60"
           >
             <RerouteIcon />
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={recenter}
-          aria-label="Recenter on your location"
-          className={`pointer-events-auto absolute right-3 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none ${
-            summaryVisible || selectedSegment ? 'bottom-72' : ''
-          }`}
-          style={
-            summaryVisible || selectedSegment
-              ? undefined
-              : {
-                  bottom:
-                    routeStatus === 'idle'
-                      ? 'max(1.5rem, env(safe-area-inset-bottom, 0px))'
-                      : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 6.125rem)',
-                }
-          }
-        >
-          <LocateIcon />
-        </button>
+        {(summaryVisible || selectedSegment) && (
+          <button
+            type="button"
+            onClick={recenter}
+            aria-label="Recenter on your location"
+            className="pointer-events-auto absolute right-3 bottom-72 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
+          >
+            <LocateIcon />
+          </button>
+        )}
 
         {selectedSegment && !summaryVisible && visibleExposure.appliedWindow && (
           <SegmentSummary
@@ -697,29 +726,41 @@ export default function MapScreen({ active, onOpenSettings, onBack, routePrefere
           />
         )}
 
-        {!summaryVisible && !selectedSegment && (
-          <RoutePanel
-            panelRef={panelRef}
-            status={routeStatus}
-            routes={routes}
-            selectedId={selectedRouteId}
-            onRetry={() => setRouteAttempt((attempt) => attempt + 1)}
-            onOpenSummary={() => {
-              setExposure((current) => ({ ...current, selectedId: null }))
-              setSummaryOpen(true)
-            }}
-          />
-        )}
-
-        {!summaryVisible && !selectedSegment && (
-        <p className="pointer-events-auto absolute bottom-1 left-2 text-[9px] text-[#3c4043]/70" style={inter}>
-          <a className="underline-offset-2 hover:text-[#3c4043]" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
-            © OpenStreetMap
-          </a>
-        </p>
+        {(summaryVisible || selectedSegment) && (
+          <div className="pointer-events-auto absolute bottom-1 left-2 z-30 max-w-[18rem]">
+            <MapCredits attributions={placeAttributions} />
+          </div>
         )}
       </div>
     </div>
+  )
+}
+
+const MAPBOX_TERMS_URL = 'https://www.mapbox.com/about/maps/'
+
+function mapboxCredit(text: string) {
+  const match = text.match(/\((https?:\/\/[^)\s]+)\)\s*$/)
+  return {
+    label: match ? text.slice(0, match.index).trim() : text,
+    href: match?.[1] ?? MAPBOX_TERMS_URL,
+  }
+}
+
+function MapCredits({ attributions }: { attributions: string[] }) {
+  return (
+    <p className="pointer-events-auto text-[9px] leading-[1.25] text-[#3c4043]/80" style={inter}>
+      {attributions.map((text) => {
+        const credit = mapboxCredit(text)
+        return (
+          <a key={credit.href + credit.label} className="underline-offset-2 hover:underline" href={credit.href} target="_blank" rel="noreferrer">
+            {credit.label}{' '}
+          </a>
+        )
+      })}
+      <a className="underline-offset-2 hover:underline" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+        © OpenStreetMap
+      </a>
+    </p>
   )
 }
 
