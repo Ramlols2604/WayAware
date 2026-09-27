@@ -7,7 +7,6 @@ import RoutePanel from './components/routing/RoutePanel'
 import TravelModeSelector from './components/routing/TravelModeSelector'
 import { ROUTE_HIT_LAYER_ID, fitRoute, segmentIdFromClick, setRouteSegments } from './map/routeLayer'
 import {
-  EMPTY_REPORTS_MESSAGE,
   applyHistoricalReportError,
   applyHistoricalReportResponse,
   beginHistoricalReportRequest,
@@ -15,10 +14,8 @@ import {
   reportsForRoute,
   formatStoredReportDate,
   idleHistoricalReports,
-  truncatedReportsMessage,
 } from './map/historicalReports'
 import {
-  COLOR_EXPLANATION,
   SEGMENT_DISTANCE_LABEL,
   SEGMENT_EXPLANATION,
   ZERO_SEGMENT_MESSAGE,
@@ -78,11 +75,8 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'ready' | 'empty' | 'error'>('idle')
   const [routeAttempt, setRouteAttempt] = useState(0)
-  const [reportAttempt, setReportAttempt] = useState(0)
   const [reports, setReports] = useState<HistoricalReportState>(idleHistoricalReports)
-  const [exposureAttempt, setExposureAttempt] = useState(0)
   const [exposure, setExposure] = useState<ExposureState>(idleExposure)
-  const [colorHelpOpen, setColorHelpOpen] = useState(false)
   const [user, setUser] = useState(MANHATTAN)
   const [mapReady, setMapReady] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -112,7 +106,6 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const visibleExposure = exposureForRoute(exposure, selectedRoute?.id ?? null)
   const selected = visibleReports.reports.find((report) => report.id === visibleReports.selectedId) ?? null
   const selectedSegment = visibleExposure.segments.find((segment) => segment.id === visibleExposure.selectedId) ?? null
-  const safetyRankingAvailable = routes.some((route) => route.safety !== null)
   const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
 
   useEffect(() => {
@@ -175,7 +168,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     return () => {
       controller.abort()
     }
-  }, [selectedRoute, reportAttempt])
+  }, [selectedRoute])
 
   useEffect(() => {
     const route = selectedRoute
@@ -189,7 +182,6 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     const requestId = exposureRequestId.current + 1
     exposureRequestId.current = requestId
     const controller = new AbortController()
-    setColorHelpOpen(false)
     setExposure(beginExposureRequest(requestId, route.id))
     requestRouteExposure(geometry, controller.signal)
       .then((response) => {
@@ -202,7 +194,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     return () => {
       controller.abort()
     }
-  }, [selectedRoute, exposureAttempt])
+  }, [selectedRoute])
 
   function recenter() {
     const map = mapRef.current
@@ -445,8 +437,18 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           onClick={recenter}
           aria-label="Recenter on your location"
           className={`pointer-events-auto absolute right-3 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none ${
-            selected || selectedSegment ? 'bottom-72' : routeStatus === 'ready' ? 'bottom-80' : routeStatus !== 'idle' ? 'bottom-52' : 'bottom-6'
+            selected || selectedSegment ? 'bottom-72' : ''
           }`}
+          style={
+            selected || selectedSegment
+              ? undefined
+              : {
+                  bottom:
+                    routeStatus === 'idle'
+                      ? 'max(1.5rem, env(safe-area-inset-bottom, 0px))'
+                      : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 3.25rem)',
+                }
+          }
         >
           <LocateIcon />
         </button>
@@ -469,21 +471,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
             status={routeStatus}
             routes={routes}
             selectedId={selectedRouteId}
-            preference={routePreference}
-            safetyRankingAvailable={safetyRankingAvailable}
-            onSelect={setSelectedRouteId}
             onRetry={() => setRouteAttempt((attempt) => attempt + 1)}
-            notice={
-              <>
-                <RouteColorControl
-                  open={colorHelpOpen}
-                  failed={visibleExposure.status === 'error'}
-                  onToggle={() => setColorHelpOpen((open) => !open)}
-                  onRetry={() => setExposureAttempt((attempt) => attempt + 1)}
-                />
-                <HistoricalReportNotice state={visibleReports} onRetry={() => setReportAttempt((attempt) => attempt + 1)} />
-              </>
-            }
           />
         )}
 
@@ -495,42 +483,6 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
         </p>
         )}
       </div>
-    </div>
-  )
-}
-
-function RouteColorControl({
-  open,
-  failed,
-  onToggle,
-  onRetry,
-}: {
-  open: boolean
-  failed: boolean
-  onToggle: () => void
-  onRetry: () => void
-}) {
-  return (
-    <div className="mt-2">
-      <button
-        type="button"
-        aria-label="About route colors"
-        aria-expanded={open}
-        onClick={onToggle}
-        className="flex size-8 items-center justify-center rounded-full text-[var(--wa-icon-soft)] hover:bg-[var(--wa-hover-strong)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
-      >
-        <InfoIcon />
-      </button>
-      {open && (
-        <p className="mt-1 text-[0.78rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
-          {COLOR_EXPLANATION}
-        </p>
-      )}
-      {failed && (
-        <button type="button" onClick={onRetry} className="mt-1 text-left text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
-          Route colors unavailable. Try again.
-        </button>
-      )}
     </div>
   )
 }
@@ -596,55 +548,6 @@ function SegmentSummary({
       <p className="mt-1 text-[0.78rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
         {SEGMENT_EXPLANATION}
       </p>
-    </div>
-  )
-}
-
-function HistoricalReportNotice({ state, onRetry }: { state: HistoricalReportState; onRetry: () => void }) {
-  if (state.status === 'idle') return null
-  const categoryNames = state.coverage?.categories.map((category) => category.offense).join(', ')
-  return (
-    <div className="mt-3 border-t border-[var(--wa-line)] pt-3">
-      <p className="text-[0.68rem] font-semibold tracking-[0.14em] text-[var(--wa-text-muted)] uppercase" style={outfit}>
-        Historical
-      </p>
-      {state.status === 'loading' && (
-        <p className="mt-1 text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
-          Loading historical reports…
-        </p>
-      )}
-      {state.status === 'error' && (
-        <button type="button" onClick={onRetry} className="mt-1 text-left text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
-          Unable to load historical reports. Try again.
-        </button>
-      )}
-      {state.status === 'empty' && (
-        <p className="mt-1 text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
-          {EMPTY_REPORTS_MESSAGE}
-        </p>
-      )}
-      {state.status === 'ready' && state.truncated && (
-        <p className="mt-1 text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
-          {truncatedReportsMessage(state.returned)}
-        </p>
-      )}
-      {state.appliedWindow && (
-        <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
-          {formatAppliedWindow(state.appliedWindow)}
-        </p>
-      )}
-      {state.coverage && (
-        <>
-          <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
-            {state.coverage.detail}
-          </p>
-          {categoryNames && (
-            <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
-              {categoryNames}
-            </p>
-          )}
-        </>
-      )}
     </div>
   )
 }
@@ -823,16 +726,6 @@ function LocateIcon() {
       <circle cx="11" cy="11" r="3" fill="#3b82f6" />
       <path d="M11 2.5v2.2M11 17.3v2.2M2.5 11h2.2M17.3 11h2.2" stroke="#3b82f6" strokeWidth="1.7" strokeLinecap="round" />
       <circle cx="11" cy="11" r="6.2" stroke="#3b82f6" strokeWidth="1.6" />
-    </svg>
-  )
-}
-
-function InfoIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-      <circle cx="9" cy="9" r="6.2" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M9 8.1V12.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="9" cy="6" r="0.8" fill="currentColor" />
     </svg>
   )
 }

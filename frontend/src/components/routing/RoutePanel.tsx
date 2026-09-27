@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react'
-import type { RouteAlternative, RouteSafety } from '../../types/api'
+import type { RouteAlternative } from '../../types/api'
 
 const outfit = { fontFamily: 'Outfit, sans-serif' }
 const inter = { fontFamily: 'Inter, sans-serif' }
@@ -8,76 +7,37 @@ type RoutePanelProps = {
   status: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
   routes: RouteAlternative[]
   selectedId: string | null
-  preference: RouteSafety
-  safetyRankingAvailable: boolean
-  onSelect: (id: string) => void
   onRetry: () => void
-  notice?: ReactNode
 }
 
-export default function RoutePanel({
-  status,
-  routes,
-  selectedId,
-  preference,
-  safetyRankingAvailable,
-  onSelect,
-  onRetry,
-  notice,
-}: RoutePanelProps) {
+export default function RoutePanel({ status, routes, selectedId, onRetry }: RoutePanelProps) {
   if (status === 'idle') return null
   const selected = routes.find((route) => route.id === selectedId) ?? routes[0]
 
   return (
-    <div className="pointer-events-auto absolute inset-x-3 bottom-3 z-20 rounded-3xl border border-[var(--wa-line)] bg-[var(--wa-card)] px-4 py-3.5 shadow-[var(--wa-sheet-shadow)]">
-      {status === 'loading' && <p className="text-[0.95rem] font-semibold text-[var(--wa-text)]" style={outfit}>Finding your route…</p>}
-      {status === 'empty' && <p className="text-[0.95rem] font-semibold text-[var(--wa-text)]" style={outfit}>No route available for this trip.</p>}
+    <div
+      className="pointer-events-auto absolute inset-x-3 z-20 rounded-3xl border border-[var(--wa-line)] bg-[var(--wa-card)] px-4 py-2.5 shadow-[var(--wa-sheet-shadow)]"
+      style={{ bottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
+    >
+      {status === 'loading' && <p className="text-[0.95rem] leading-5 font-semibold text-[var(--wa-text)]" style={outfit}>Finding your route…</p>}
+      {status === 'empty' && <p className="text-[0.95rem] leading-5 font-semibold text-[var(--wa-text)]" style={outfit}>No route available for this trip.</p>}
       {status === 'error' && (
-        <button type="button" onClick={onRetry} className="text-left text-[0.95rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+        <button type="button" onClick={onRetry} className="text-left text-[0.95rem] leading-5 font-semibold text-[var(--wa-text)]" style={outfit}>
           Unable to load route. Try again.
         </button>
       )}
       {status === 'ready' && selected && (
-        <>
-          <p className="text-[1.7rem] leading-none font-bold text-[var(--wa-text)]" style={outfit}>
+        <p className="flex items-baseline gap-2 text-[0.95rem] leading-5 whitespace-nowrap">
+          <span className="font-semibold text-[var(--wa-text)]" style={outfit}>
             {formatDuration(selected.durationSeconds)}
-          </p>
-          <p className="mt-1 text-[0.95rem] text-[var(--wa-text-muted)]" style={inter}>
+          </span>
+          <span className="text-[var(--wa-text-muted)]" aria-hidden="true" style={inter}>
+            ·
+          </span>
+          <span className="font-medium text-[var(--wa-text-muted)]" style={inter}>
             {formatDistance(selected.distanceMeters)}
-          </p>
-          {preference === 'safest' && !safetyRankingAvailable && (
-            <p className="mt-2 text-[0.75rem] text-[var(--wa-text-muted)]" style={inter}>
-              Safest ranking is not available from the route service yet.
-            </p>
-          )}
-          {routes.length > 1 && (
-            <div className="mt-3 flex flex-col gap-1.5" role="radiogroup" aria-label="Route alternatives">
-              {routes.map((route, index) => {
-                const active = route.id === selected.id
-                return (
-                  <button
-                    key={route.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => onSelect(route.id)}
-                    className={`rounded-xl border px-3 py-2 text-left ${
-                      active ? 'border-[#3b82f6] bg-[#3b82f6]/10' : 'border-[var(--wa-line)]'
-                    }`}
-                  >
-                    <span className="block text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
-                      Route {index + 1}
-                    </span>
-                    <span className="text-[0.8rem] text-[var(--wa-text-muted)]" style={inter}>
-                      {formatDuration(route.durationSeconds)} · {formatDistance(route.distanceMeters)}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-          {notice}
-        </>
+          </span>
+        </p>
       )}
     </div>
   )
