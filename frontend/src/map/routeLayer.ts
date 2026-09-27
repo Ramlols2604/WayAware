@@ -85,23 +85,34 @@ export function segmentHitFromClick(event: MapLayerMouseEvent) {
   return { segmentId, level: typeof level === 'string' ? level : '' }
 }
 
-export function fitRoute(map: MapLibreMap, geometry: LineStringGeometry) {
+export function boundsForPoints(points: [number, number][]) {
   let west = Infinity
   let south = Infinity
   let east = -Infinity
   let north = -Infinity
-  for (const [longitude, latitude] of geometry.coordinates) {
+  for (const [longitude, latitude] of points) {
     west = Math.min(west, longitude)
     south = Math.min(south, latitude)
     east = Math.max(east, longitude)
     north = Math.max(north, latitude)
   }
-  if (!Number.isFinite(west)) return
+  if (!Number.isFinite(west)) return null
+  return { west, south, east, north }
+}
+
+export function fitRoute(
+  map: MapLibreMap,
+  geometry: LineStringGeometry,
+  endpoints: [number, number][],
+  padding: { top: number; bottom: number; left: number; right: number },
+) {
+  const bounds = boundsForPoints([...geometry.coordinates, ...endpoints])
+  if (!bounds) return
   map.fitBounds(
     [
-      [west, south],
-      [east, north],
+      [bounds.west, bounds.south],
+      [bounds.east, bounds.north],
     ],
-    { padding: { top: 210, bottom: 180, left: 28, right: 28 }, duration: 700, maxZoom: 15 },
+    { padding, duration: 700, maxZoom: 15 },
   )
 }

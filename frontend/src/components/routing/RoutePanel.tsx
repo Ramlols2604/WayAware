@@ -1,3 +1,4 @@
+import type { Ref } from 'react'
 import type { RouteAlternative } from '../../types/api'
 import { ROUTE_SUMMARY_LABEL } from '../../map/routeExposure'
 
@@ -10,15 +11,17 @@ type RoutePanelProps = {
   selectedId: string | null
   onRetry: () => void
   onOpenSummary: () => void
+  panelRef?: Ref<HTMLDivElement>
 }
 
-export default function RoutePanel({ status, routes, selectedId, onRetry, onOpenSummary }: RoutePanelProps) {
+export default function RoutePanel({ status, routes, selectedId, onRetry, onOpenSummary, panelRef }: RoutePanelProps) {
   if (status === 'idle') return null
   const selected = routes.find((route) => route.id === selectedId) ?? routes[0]
   const box = 'rounded-3xl border border-[var(--wa-line)] bg-[var(--wa-card)] shadow-[var(--wa-sheet-shadow)]'
 
   return (
     <div
+      ref={panelRef}
       className="pointer-events-auto absolute inset-x-3 z-20 grid items-stretch gap-2"
       style={{
         bottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))',

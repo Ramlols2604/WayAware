@@ -48,6 +48,35 @@ function userHtml() {
   return `<div style="width:46px;height:46px;position:relative"><div style="position:absolute;inset:0;border-radius:999px;background:rgba(59,130,246,.22)"></div><div style="position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:999px;background:#3B82F6;border:2.5px solid white;box-shadow:0 0 0 1px rgba(59,130,246,.35)"></div></div>`
 }
 
+function endpointElement(kind: 'origin' | 'destination') {
+  const element = document.createElement('div')
+  element.dataset.marker = kind
+  element.style.pointerEvents = 'none'
+  if (kind === 'origin') {
+    element.setAttribute('aria-label', 'Route start')
+    element.style.width = '16px'
+    element.style.height = '16px'
+    element.style.borderRadius = '999px'
+    element.style.background = '#ffffff'
+    element.style.border = '4px solid #3B82F6'
+    element.style.boxShadow = '0 1px 4px rgba(0,0,0,.35)'
+    return element
+  }
+  element.setAttribute('aria-label', 'Route end')
+  element.style.width = '22px'
+  element.style.height = '30px'
+  element.innerHTML = '<svg width="22" height="30" viewBox="0 0 22 30" aria-hidden="true"><path d="M11 1.5a8 8 0 0 0-8 8c0 6 8 18 8 18s8-12 8-18a8 8 0 0 0-8-8z" fill="#3B82F6" stroke="white" stroke-width="1.5"/><circle cx="11" cy="9.5" r="2.6" fill="white"/></svg>'
+  return element
+}
+
+function framePadding(map: maplibregl.Map, search: HTMLElement | null, panel: HTMLElement | null) {
+  const mapRect = map.getContainer().getBoundingClientRect()
+  const gap = 20
+  const top = search ? Math.max(gap, search.getBoundingClientRect().bottom - mapRect.top + gap) : 180
+  const bottom = panel ? Math.max(gap, mapRect.bottom - panel.getBoundingClientRect().top + gap) : 108
+  return { top, bottom, left: 28, right: 28 }
+}
+
 type MapScreenProps = {
   onOpenSettings: () => void
   onBack: () => void
@@ -67,7 +96,10 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const [user, setUser] = useState(MANHATTAN)
   const [mapReady, setMapReady] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
+  const routeQueryRef = useRef('')
   const ignoreMapClick = useRef(false)
   const exposureRequestId = useRef(0)
 
@@ -94,9 +126,14 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const summaryVisible = summaryOpen && visibleExposure.routeId === selectedRoute?.id
   const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
 
+  const routeQueryKey = places.origin.place && places.destination.place
+    ? `${places.origin.place.longitude},${places.origin.place.latitude}|${places.destination.place.longitude},${places.destination.place.latitude}|${travelMode}`
+    : ''
+
   useEffect(() => {
     const originPlace = places.origin.place
     const destinationPlace = places.destination.place
+    routeQueryRef.current = ''
     if (!originPlace || !destinationPlace) {
       setRoutes([])
       setSelectedRouteId(null)
@@ -104,6 +141,10 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
       return
     }
     let cancelled = false
+    const queryKey = routeQueryKey
+    setRoutes([])
+    setSelectedRouteId(null)
+    setSummaryOpen(false)
     setRouteStatus('loading')
     requestRoutes({
       origin: { longitude: originPlace.longitude, latitude: originPlace.latitude },
@@ -112,6 +153,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     })
       .then((list) => {
         if (cancelled) return
+        routeQueryRef.current = queryKey
         setRoutes(list)
         setRouteStatus(list.length ? 'ready' : 'empty')
         if (!list.length) setSelectedRouteId(null)
@@ -123,7 +165,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     return () => {
       cancelled = true
     }
-  }, [places.origin.place, places.destination.place, travelMode, routeAttempt])
+  }, [places.origin.place, places.destination.place, routeQueryKey, travelMode, routeAttempt])
 
   useEffect(() => {
     if (!routes.length) return
@@ -266,8 +308,45 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady) return
-    if (selectedRoute) fitRoute(map, selectedRoute.geometry)
-  }, [mapReady, selectedRoute])
+    if (!selectedRoute || routeQueryRef.current !== routeQueryKey) return
+    const geometry = selectedRoute.geometry
+    const origin = places.origin.place
+    const destination = places.destination.place
+    const endpoints: [number, number][] = []
+    if (origin) endpoints.push([origin.longitude, origin.latitude])
+    if (destination) endpoints.push([destination.longitude, destination.latitude])
+    const frame = requestAnimationFrame(() => {
+      const current = mapRef.current
+      if (!current || routeQueryRef.current !== routeQueryKey) return
+      fitRoute(current, geometry, endpoints, framePadding(current, searchRef.current, panelRef.current))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [mapReady, places.destination.place, places.origin.place, routeQueryKey, selectedRoute])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+    const markers: maplibregl.Marker[] = []
+    const origin = places.origin.place
+    const destination = places.destination.place
+    if (origin) {
+      markers.push(
+        new maplibregl.Marker({ element: endpointElement('origin'), anchor: 'center' })
+          .setLngLat([origin.longitude, origin.latitude])
+          .addTo(map),
+      )
+    }
+    if (destination) {
+      markers.push(
+        new maplibregl.Marker({ element: endpointElement('destination'), anchor: 'bottom' })
+          .setLngLat([destination.longitude, destination.latitude])
+          .addTo(map),
+      )
+    }
+    return () => {
+      markers.forEach((marker) => marker.remove())
+    }
+  }, [mapReady, places.destination.place, places.origin.place])
 
   useEffect(() => {
     const map = mapRef.current
@@ -297,7 +376,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
       <div ref={containerRef} className="h-full w-full" />
 
       <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="pointer-events-auto absolute top-12 right-3 left-3 flex items-start gap-2">
+        <div ref={searchRef} className="pointer-events-auto absolute top-12 right-3 left-3 flex items-start gap-2">
           <button
             type="button"
             onClick={onBack}
@@ -419,6 +498,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
 
         {!summaryVisible && !selectedSegment && (
           <RoutePanel
+            panelRef={panelRef}
             status={routeStatus}
             routes={routes}
             selectedId={selectedRouteId}
