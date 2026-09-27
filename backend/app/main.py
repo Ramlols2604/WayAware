@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.routers.crime import router as crime_router
 from app.routers.health import router as health_router
 from app.routers.places import router as places_router
 from app.routers.routes import router as routes_router
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(places_router)
 app.include_router(routes_router)
+app.include_router(crime_router)
 
 
 def _sanitize_non_finite_floats(value: Any) -> Any:

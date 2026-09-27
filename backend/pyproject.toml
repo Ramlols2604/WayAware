@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn",
     "httpx",
     "pydantic-settings",
+    "psycopg[binary]",
 ]
 
 [project.optional-dependencies]
