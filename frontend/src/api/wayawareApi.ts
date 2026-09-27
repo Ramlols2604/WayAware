@@ -1,5 +1,18 @@
 import { apiBaseUrl } from '../env'
-import type { LineStringGeometry, PlaceSuggestion, ResolvedPlace, RouteAlternative, RouteEndpoints, RouteSafety, TravelMode } from '../types/api'
+import {
+  HISTORICAL_REPORT_LIMIT,
+  HISTORICAL_REPORT_RADIUS_M,
+  HISTORICAL_REPORT_WINDOW,
+  type HistoricalReport,
+  type HistoricalReportResult,
+  type LineStringGeometry,
+  type PlaceSuggestion,
+  type ResolvedPlace,
+  type RouteAlternative,
+  type RouteEndpoints,
+  type RouteSafety,
+  type TravelMode,
+} from '../types/api'
 
 export class WayAwareApiError extends Error {
   status?: number
@@ -62,7 +75,8 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
         ...init?.headers,
       },
     })
-  } catch {
+  } catch (error) {
+    if (isAbortError(error)) throw error
     throw new WayAwareApiError('Network request failed.')
   }
   if (!response.ok) {
@@ -91,6 +105,24 @@ export async function retrievePlace(mapboxId: string, sessionToken: string): Pro
   const place = extractPlace(data, mapboxId)
   if (!place) throw new WayAwareApiError('Selected place did not include coordinates.')
   return place
+}
+
+export async function requestAlongRoute(
+  geometry: LineStringGeometry,
+  signal?: AbortSignal,
+): Promise<HistoricalReportResult> {
+  const data = await requestJson('/crime/along-route', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      route: geometry,
+      radius_m: HISTORICAL_REPORT_RADIUS_M,
+      start: HISTORICAL_REPORT_WINDOW.start,
+      end: HISTORICAL_REPORT_WINDOW.end,
+      limit: HISTORICAL_REPORT_LIMIT,
+    }),
+  })
+  return parseAlongRoute(data)
 }
 
 export async function requestRoutes(endpoints: RouteEndpoints): Promise<RouteAlternative[]> {
@@ -337,6 +369,61 @@ function readNumber(row: Record<string, unknown>, patterns: RegExp[]) {
 
 function isLngLat(value: unknown): value is [number, number] {
   return Array.isArray(value) && value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number'
+}
+
+function parseAlongRoute(data: unknown): HistoricalReportResult {
+  if (!isRecord(data) || !Array.isArray(data.incidents) || !isRecord(data.window) || !isRecord(data.coverage)) {
+    throw new WayAwareApiError('Historical reports were not returned.')
+  }
+  const start = readString(data.window, [/^start$/i])
+  const end = readString(data.window, [/^end$/i])
+  const detail = readString(data.coverage, [/^detail$/i])
+  const returned = readNumber(data, [/^returned$/i])
+  if (!start || !end || !detail || returned === null || typeof data.truncated !== 'boolean') {
+    throw new WayAwareApiError('Historical reports were not returned.')
+  }
+  const categories = Array.isArray(data.coverage.categories) ? data.coverage.categories.filter(isRecord) : []
+  const incidents = data.incidents.filter(isRecord).map(parseHistoricalReport)
+  return {
+    window: { start, end },
+    returned,
+    truncated: data.truncated,
+    coverage: {
+      detail,
+      categories: categories.map((category) => ({
+        kyCd: readNumber(category, [/ky_cd/i]) ?? 0,
+        offense: readString(category, [/ofns_desc/i]) ?? 'Historical report',
+      })),
+    },
+    timestampQuality: 'unverified',
+    incidents,
+  }
+}
+
+function parseHistoricalReport(row: Record<string, unknown>): HistoricalReport {
+  const source = readString(row, [/^source$/i])
+  const sourceId = readString(row, [/source_id/i])
+  const storedOccurredAt = readString(row, [/stored_occurred_at/i])
+  const latitude = readNumber(row, [/^latitude$/i])
+  const longitude = readNumber(row, [/^longitude$/i])
+  const distanceMeters = readNumber(row, [/distance_m/i])
+  if (!source || !sourceId || !storedOccurredAt || latitude === null || longitude === null || distanceMeters === null) {
+    throw new WayAwareApiError('Historical reports were not returned.')
+  }
+  return {
+    id: `${source}:${sourceId}:${storedOccurredAt}`,
+    offense: readString(row, [/ofns_desc/i]) ?? 'Historical report',
+    description: readString(row, [/pd_desc/i]),
+    storedOccurredAt,
+    timeOfDayKnown: row.time_of_day_known === true,
+    distanceMeters,
+    latitude,
+    longitude,
+  }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

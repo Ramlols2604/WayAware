@@ -38,3 +38,61 @@ export type RouteEndpoints = {
   destination: { longitude: number; latitude: number }
   mode: TravelMode
 }
+
+/** Sent with every along-route request. The map displays the window the response applied. */
+export const HISTORICAL_REPORT_WINDOW = {
+  start: '2006-06-01T00:00:00Z',
+  end: '2026-06-01T00:00:00Z',
+} as const
+
+export const HISTORICAL_REPORT_RADIUS_M = 50
+export const HISTORICAL_REPORT_LIMIT = 100
+
+export type HistoricalReportWindow = {
+  start: string
+  end: string
+}
+
+export type HistoricalReportCategory = {
+  kyCd: number
+  offense: string
+}
+
+export type HistoricalReportCoverage = {
+  categories: HistoricalReportCategory[]
+  detail: string
+}
+
+export type HistoricalReport = {
+  id: string
+  offense: string
+  description: string | null
+  storedOccurredAt: string
+  timeOfDayKnown: boolean
+  distanceMeters: number
+  latitude: number
+  longitude: number
+}
+
+export type HistoricalReportResult = {
+  window: HistoricalReportWindow
+  returned: number
+  truncated: boolean
+  coverage: HistoricalReportCoverage
+  timestampQuality: 'unverified'
+  incidents: HistoricalReport[]
+}
+
+export type HistoricalReportStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+
+export type HistoricalReportState = {
+  requestId: number
+  routeId: string | null
+  status: HistoricalReportStatus
+  reports: HistoricalReport[]
+  selectedId: string | null
+  appliedWindow: HistoricalReportWindow | null
+  coverage: HistoricalReportCoverage | null
+  truncated: boolean
+  returned: number
+}

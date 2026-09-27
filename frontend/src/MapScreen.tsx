@@ -6,128 +6,25 @@ import PlaceSuggestions from './components/routing/PlaceSuggestions'
 import RoutePanel from './components/routing/RoutePanel'
 import TravelModeSelector from './components/routing/TravelModeSelector'
 import { setRouteLine, fitRoute } from './map/routeLayer'
+import {
+  EMPTY_REPORTS_MESSAGE,
+  applyHistoricalReportError,
+  applyHistoricalReportResponse,
+  beginHistoricalReportRequest,
+  formatAppliedWindow,
+  reportsForRoute,
+  formatStoredReportDate,
+  idleHistoricalReports,
+  truncatedReportsMessage,
+} from './map/historicalReports'
 import { useRoutePlaces } from './routing/usePlaceSearch'
-import { requestRoutes } from './api/wayawareApi'
-import type { RouteAlternative, RouteSafety, TravelMode } from './types/api'
-
-type Severity = 'major' | 'minor'
-type IncidentIcon = 'fire' | 'shooting' | 'assault' | 'theft' | 'crash' | 'harassment' | 'robbery' | 'police'
-
-type Incident = {
-  id: string
-  type: string
-  severity: Severity
-  lat: number
-  lng: number
-  location: string
-  icon: IncidentIcon
-}
+import { requestAlongRoute, requestRoutes } from './api/wayawareApi'
+import type { HistoricalReport, HistoricalReportState, RouteAlternative, RouteSafety, TravelMode } from './types/api'
 
 const MANHATTAN = { lat: 40.7549, lng: -73.9857 }
-
-/** Demo incidents only. These are not live NYC reports. */
-const incidents: Incident[] = [
-  {
-    id: 'midtown-fire',
-    type: 'Fire',
-    severity: 'major',
-    lat: 40.7561,
-    lng: -73.9864,
-    location: '145 W 42nd St, New York, NY',
-    icon: 'fire',
-  },
-  {
-    id: 'harlem-shooting',
-    type: 'Shooting',
-    severity: 'major',
-    lat: 40.8044,
-    lng: -73.9373,
-    location: 'E 125th St & Lexington Ave, New York, NY',
-    icon: 'shooting',
-  },
-  {
-    id: 'herald-theft',
-    type: 'Theft',
-    severity: 'minor',
-    lat: 40.7504,
-    lng: -73.9896,
-    location: '34th St & 7th Ave, New York, NY',
-    icon: 'theft',
-  },
-  {
-    id: 'forest-crash',
-    type: 'Car Crash',
-    severity: 'minor',
-    lat: 40.7208,
-    lng: -73.844,
-    location: 'Queens Blvd & 71st Ave, Queens, NY',
-    icon: 'crash',
-  },
-  {
-    id: 'canal-harassment',
-    type: 'Harassment',
-    severity: 'minor',
-    lat: 40.7191,
-    lng: -74.0014,
-    location: 'Canal St & Broadway, New York, NY',
-    icon: 'harassment',
-  },
-  {
-    id: 'brooklyn-assault',
-    type: 'Serious Assault',
-    severity: 'major',
-    lat: 40.65,
-    lng: -73.96,
-    location: 'Flatbush Ave & Church Ave, Brooklyn, NY',
-    icon: 'assault',
-  },
-  {
-    id: 'jamaica-police',
-    type: 'Police Activity',
-    severity: 'minor',
-    lat: 40.7022,
-    lng: -73.788,
-    location: 'Jamaica Ave & 160th St, Queens, NY',
-    icon: 'police',
-  },
-  {
-    id: 'coney-robbery',
-    type: 'Robbery',
-    severity: 'minor',
-    lat: 40.574,
-    lng: -73.986,
-    location: 'Surf Ave & W 12th St, Brooklyn, NY',
-    icon: 'robbery',
-  },
-]
-
+const HISTORICAL_MARKER = '#334155'
 const outfit = { fontFamily: 'Outfit, sans-serif' }
 const inter = { fontFamily: 'Inter, sans-serif' }
-
-const MAJOR = '#EF4444'
-const MINOR = '#F5C518'
-
-const iconSvg: Record<IncidentIcon, string> = {
-  fire: '<path fill="white" d="M12.1 1.6c.4 2.4 2.4 3.6 3 6 .4 1.7-.4 3.1-1.5 4 1.2-.2 2.6-1.2 3.1-2.9.2 3.4-2.1 6.5-5.6 6.5-3.7 0-6.1-2.8-6.1-6.2 0-2.1 1-3.4 1.8-4.6.6 1.4 1.3 1.8 2 1.7-.8-1.8-.4-3.4.3-5.2.6 1.5 1.6 2.1 2-.3.3.9.6 1.5 1 .4z"/>',
-  shooting:
-    '<path fill="white" d="M1.8 8.4h16.4c1.2 0 2.1 1 2.1 2.2v.3h-6.2l-1.6 2.7H9.6v6.2H6.2v-6.2H4.8L3.6 10.9H1.8V8.4z"/>',
-  assault:
-    '<circle cx="8.6" cy="7.4" r="2.7" fill="white"/><path fill="white" d="M4.2 19.8v-.6c.4-2.8 2.1-4.6 4.4-4.6s4 1.8 4.4 4.6v.6H4.2z"/><path stroke="white" stroke-width="1.8" stroke-linecap="round" d="M16 4.8 18.4 3.4M17.2 8.2h2.8M16 11.4l2.4 1.4"/>',
-  theft:
-    '<path fill="white" d="M8.4 8.6C8.7 5.4 10 3.5 12 3.5s3.3 1.9 3.6 5.1H8.4z"/><path fill="white" d="M2.6 10.4c2-.8 5.2-1.3 9.4-1.3s7.4.5 9.4 1.3c-1.8.7-5.2 1.2-9.4 1.2s-7.6-.5-9.4-1.2z"/><path fill="white" fill-rule="evenodd" d="M3.8 15.2c0-2 3.6-3.4 8.2-3.4s8.2 1.4 8.2 3.4-3.6 3.4-8.2 3.4-8.2-1.4-8.2-3.4zm3.2-.1a1.7 1.7 0 1 0 .02 0zm6.4 0a1.7 1.7 0 1 0 .02 0z"/>',
-  crash:
-    '<path fill="white" fill-rule="evenodd" d="M12 2.6 17.6 16.2H6.4L12 2.6zM8.2 11h7.6l.8 2.1H7.4L8.2 11z"/><path fill="white" d="M6.8 16.2h10.4v2.3c0 .6-.5 1.1-1.1 1.1H7.9c-.6 0-1.1-.5-1.1-1.1v-2.3z"/>',
-  harassment:
-    '<circle cx="8.4" cy="5.6" r="2.7" fill="white"/><path fill="white" d="M3.8 20.2c.3-3.1 2.1-5 4.6-5s4.3 1.9 4.6 5H3.8z"/><path fill="white" d="M22.2 6.4c-1.8 1.6-4.4 3.2-6.6 4-.7.2-.8 1.1-.2 1.5.7.4 1.5.1 2-.4 1.5-.9 3.6-2.2 4.8-3.4.5-.5.5-1.2 0-1.7z"/><ellipse cx="14.1" cy="12.7" rx="2.35" ry="1.55" fill="white"/>',
-  robbery:
-    '<path fill="white" fill-rule="evenodd" d="M7.2 8.2h8.4v11.2H7.2V8.2zm1.5 2.4h5.4v1.7H8.7v-1.7z"/><path fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" d="M15.6 10.2c2.6-.2 3.8 1.8 3 3.6"/><path stroke="white" stroke-width="1.7" stroke-linecap="round" d="M3.2 11.4h2.6M3.4 14.4h2.4"/>',
-  police:
-    '<path fill="white" fill-rule="evenodd" d="M12 2.2 18.6 4.7v5.6c0 4-2.6 6.5-6.6 8-4-1.5-6.6-4-6.6-8V4.7L12 2.2zm0 5.2.95 1.9 2.1.3-1.5 1.5.35 2.1L12 12.2l-1.9 1 .35-2.1-1.5-1.5 2.1-.3z"/>',
-}
-
-function severityColor(severity: Severity) {
-  return severity === 'major' ? MAJOR : MINOR
-}
 
 function chooseRoute(list: RouteAlternative[], preference: RouteSafety) {
   if (!list.length) return null
@@ -141,11 +38,11 @@ function isInNyc(lat: number, lng: number) {
   return lat > 40.48 && lat < 40.93 && lng > -74.28 && lng < -73.68
 }
 
-function markerHtml(color: string, svg: string, selected: boolean) {
+function historicalMarkerHtml(selected: boolean) {
   const ring = selected
     ? 'box-shadow:0 0 0 4px rgba(255,255,255,.85), 0 6px 14px rgba(0,0,0,.4);'
     : 'box-shadow:0 6px 14px rgba(0,0,0,.35);'
-  return `<div style="width:36px;height:36px;border-radius:999px;background:${color};display:flex;align-items:center;justify-content:center;border:2px solid white;cursor:pointer;${ring}"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style="filter:drop-shadow(0 1px 0 rgba(0,0,0,.28))">${svg}</svg></div>`
+  return `<div style="width:28px;height:28px;border-radius:999px;background:${HISTORICAL_MARKER};border:2px solid white;cursor:pointer;${ring}"></div>`
 }
 
 function clusterHtml(count: number) {
@@ -169,14 +66,14 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'ready' | 'empty' | 'error'>('idle')
   const [routeAttempt, setRouteAttempt] = useState(0)
+  const [reportAttempt, setReportAttempt] = useState(0)
+  const [reports, setReports] = useState<HistoricalReportState>(idleHistoricalReports)
   const [user, setUser] = useState(MANHATTAN)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const ignoreMapClick = useRef(false)
-
-  const selected = incidents.find((incident) => incident.id === selectedId) ?? null
+  const reportRequestId = useRef(0)
 
   useEffect(() => {
     if (!navigator.geolocation) return
@@ -195,6 +92,8 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   }
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
+  const visibleReports = reportsForRoute(reports, selectedRoute?.id ?? null)
+  const selected = visibleReports.reports.find((report) => report.id === visibleReports.selectedId) ?? null
   const safetyRankingAvailable = routes.some((route) => route.safety !== null)
   const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
 
@@ -234,6 +133,32 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     setSelectedRouteId(chooseRoute(routes, routePreference))
   }, [routePreference, routes])
 
+  useEffect(() => {
+    const route = selectedRoute
+    const geometry = route?.geometry
+    if (!route || !geometry) {
+      const requestId = reportRequestId.current + 1
+      reportRequestId.current = requestId
+      setReports({ ...idleHistoricalReports, requestId })
+      return
+    }
+    const requestId = reportRequestId.current + 1
+    reportRequestId.current = requestId
+    const controller = new AbortController()
+    setReports(beginHistoricalReportRequest(requestId, route.id))
+    requestAlongRoute(geometry, controller.signal)
+      .then((response) => {
+        setReports((current) => applyHistoricalReportResponse(current, requestId, response))
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
+        setReports((current) => applyHistoricalReportError(current, requestId))
+      })
+    return () => {
+      controller.abort()
+    }
+  }, [selectedRoute, reportAttempt])
+
   function recenter() {
     const map = mapRef.current
     if (!map) return
@@ -267,7 +192,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           ignoreMapClick.current = false
           return
         }
-        setSelectedId(null)
+        setReports((current) => ({ ...current, selectedId: null }))
       })
       map.once('load', () => {
         map?.fitBounds(
@@ -297,21 +222,19 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     const place = () => {
       markers.forEach((marker) => marker.remove())
       markers.length = 0
-      for (const group of clusterIncidents(incidents, map)) {
-        const lat = group.reduce((sum, item) => sum + item.lat, 0) / group.length
-        const lng = group.reduce((sum, item) => sum + item.lng, 0) / group.length
+      for (const group of clusterReports(visibleReports.reports, map)) {
+        const lat = group.reduce((sum, item) => sum + item.latitude, 0) / group.length
+        const lng = group.reduce((sum, item) => sum + item.longitude, 0) / group.length
         const element = document.createElement('div')
         if (group.length > 1) {
           element.innerHTML = clusterHtml(group.length)
+          element.setAttribute('role', 'button')
+          element.setAttribute('aria-label', `${group.length} historical reports`)
         } else {
-          const incident = group[0]
-          element.innerHTML = markerHtml(severityColor(incident.severity), iconSvg[incident.icon], incident.id === selectedId)
+          const report = group[0]
+          element.innerHTML = historicalMarkerHtml(report.id === visibleReports.selectedId)
           element.setAttribute('role', 'button')
-          element.setAttribute('aria-label', incident.type)
-        }
-        if (group.length > 1) {
-          element.setAttribute('role', 'button')
-          element.setAttribute('aria-label', `${group.length} incidents`)
+          element.setAttribute('aria-label', `Historical ${report.offense}`)
         }
         element.addEventListener('click', (event) => {
           event.stopPropagation()
@@ -320,7 +243,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
             map.flyTo({ center: [lng, lat], zoom: Math.min(map.getZoom() + 2, 16), duration: 450 })
             return
           }
-          setSelectedId(group[0].id)
+          setReports((current) => ({ ...current, selectedId: group[0].id }))
         })
         markers.push(new maplibregl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map))
       }
@@ -338,7 +261,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
       map.off('moveend', place)
       markers.forEach((marker) => marker.remove())
     }
-  }, [mapReady, selectedId, user])
+  }, [mapReady, visibleReports.reports, visibleReports.selectedId, user])
 
   useEffect(() => {
     const map = mapRef.current
@@ -435,14 +358,14 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           onClick={recenter}
           aria-label="Recenter on your location"
           className={`pointer-events-auto absolute right-3 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none ${
-            selected ? 'bottom-56' : routeStatus !== 'idle' ? 'bottom-52' : 'bottom-6'
+            selected ? 'bottom-72' : routeStatus === 'ready' ? 'bottom-80' : routeStatus !== 'idle' ? 'bottom-52' : 'bottom-6'
           }`}
         >
           <LocateIcon />
         </button>
 
         {selected && (
-          <IncidentSheet key={selected.id} incident={selected} onClose={() => setSelectedId(null)} />
+          <IncidentSheet key={selected.id} report={selected} onClose={() => setReports((current) => ({ ...current, selectedId: null }))} />
         )}
 
         {!selected && (
@@ -454,6 +377,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
             safetyRankingAvailable={safetyRankingAvailable}
             onSelect={setSelectedRouteId}
             onRetry={() => setRouteAttempt((attempt) => attempt + 1)}
+            notice={<HistoricalReportNotice state={visibleReports} onRetry={() => setReportAttempt((attempt) => attempt + 1)} />}
           />
         )}
 
@@ -469,7 +393,56 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   )
 }
 
-function IncidentSheet({ incident, onClose }: { incident: Incident; onClose: () => void }) {
+function HistoricalReportNotice({ state, onRetry }: { state: HistoricalReportState; onRetry: () => void }) {
+  if (state.status === 'idle') return null
+  const categoryNames = state.coverage?.categories.map((category) => category.offense).join(', ')
+  return (
+    <div className="mt-3 border-t border-[var(--wa-line)] pt-3">
+      <p className="text-[0.68rem] font-semibold tracking-[0.14em] text-[var(--wa-text-muted)] uppercase" style={outfit}>
+        Historical
+      </p>
+      {state.status === 'loading' && (
+        <p className="mt-1 text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+          Loading historical reports…
+        </p>
+      )}
+      {state.status === 'error' && (
+        <button type="button" onClick={onRetry} className="mt-1 text-left text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+          Unable to load historical reports. Try again.
+        </button>
+      )}
+      {state.status === 'empty' && (
+        <p className="mt-1 text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+          {EMPTY_REPORTS_MESSAGE}
+        </p>
+      )}
+      {state.status === 'ready' && state.truncated && (
+        <p className="mt-1 text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+          {truncatedReportsMessage(state.returned)}
+        </p>
+      )}
+      {state.appliedWindow && (
+        <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
+          {formatAppliedWindow(state.appliedWindow)}
+        </p>
+      )}
+      {state.coverage && (
+        <>
+          <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
+            {state.coverage.detail}
+          </p>
+          {categoryNames && (
+            <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
+              {categoryNames}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function IncidentSheet({ report, onClose }: { report: HistoricalReport; onClose: () => void }) {
   const [shown, setShown] = useState(false)
 
   useEffect(() => {
@@ -480,7 +453,7 @@ function IncidentSheet({ incident, onClose }: { incident: Incident; onClose: () 
   return (
     <div
       role="dialog"
-      aria-label={incident.type}
+      aria-label={`Historical ${report.offense}`}
       className={`pointer-events-auto absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border border-b-0 border-[var(--wa-line)] bg-[var(--wa-card)] px-5 pt-5 pb-7 shadow-[var(--wa-sheet-shadow)] transition-transform duration-300 ease-out ${
         shown ? 'translate-y-0' : 'translate-y-full'
       }`}
@@ -488,7 +461,7 @@ function IncidentSheet({ incident, onClose }: { incident: Incident; onClose: () 
       <button
         type="button"
         onClick={onClose}
-        aria-label="Close incident"
+        aria-label="Close report"
         className="absolute top-3 right-3 flex size-9 items-center justify-center rounded-full text-[var(--wa-icon-faint)] hover:bg-[var(--wa-hover-strong)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
       >
         <CloseIcon />
@@ -496,44 +469,28 @@ function IncidentSheet({ incident, onClose }: { incident: Incident; onClose: () 
 
       <div className="flex flex-col items-center text-center">
         <span
-          className="flex size-14 items-center justify-center rounded-full border-2 border-white shadow-[0_6px_14px_rgba(0,0,0,0.28)]"
-          style={{ background: severityColor(incident.severity) }}
-        >
-          <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg[incident.icon] }} />
-        </span>
-        <h2 className="mt-3 text-[1.85rem] leading-none font-bold text-[var(--wa-text)]" style={outfit}>
-          {incident.type}
+          className="size-14 rounded-full border-2 border-white shadow-[0_6px_14px_rgba(0,0,0,0.28)]"
+          style={{ background: HISTORICAL_MARKER }}
+        />
+        <h2 className="mt-3 text-[1.55rem] leading-tight font-bold text-[var(--wa-text)]" style={outfit}>
+          {report.offense}
         </h2>
-        <p className="mt-2 flex items-center justify-center gap-1.5 text-[0.92rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
-          <SheetPin />
-          {incident.location}
+        {report.description && (
+          <p className="mt-2 text-[0.92rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
+            {report.description}
+          </p>
+        )}
+        <p className="mt-2 text-[0.92rem] text-[var(--wa-text-muted)]" style={inter}>
+          {Math.round(report.distanceMeters)} m from the route
+        </p>
+        <p className="mt-1 text-[0.92rem] text-[var(--wa-text-muted)]" style={inter}>
+          Stored date {formatStoredReportDate(report.storedOccurredAt)}. Time of day unverified.
         </p>
         <p className="mt-1 text-[0.68rem] font-semibold tracking-[0.14em] text-[var(--wa-text-muted)] uppercase" style={outfit}>
-          Demo data
+          Historical
         </p>
       </div>
-
-      <button
-        type="button"
-        className="mt-5 w-full rounded-2xl py-3.5 text-[1.05rem] font-bold tracking-wide text-white focus-visible:ring-2 focus-visible:ring-[#60a5fa] focus-visible:outline-none active:scale-[0.98]"
-        style={{
-          ...outfit,
-          background: 'linear-gradient(135deg, #2563eb 0%, #3b82f6 60%, #60a5fa 100%)',
-          boxShadow: '0 4px 24px rgba(59,130,246,0.4)',
-        }}
-      >
-        More Information
-      </button>
     </div>
-  )
-}
-
-function SheetPin() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="shrink-0 text-[var(--wa-text-muted)]">
-      <path d="M7 1.2a3.6 3.6 0 0 0-3.6 3.6c0 2.6 3.6 7 3.6 7s3.6-4.4 3.6-7A3.6 3.6 0 0 0 7 1.2z" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="7" cy="4.7" r="1.15" fill="currentColor" />
-    </svg>
   )
 }
 
@@ -591,17 +548,17 @@ function googleColor(id: string, type: 'fill' | 'line') {
   return null
 }
 
-function clusterIncidents(items: Incident[], map: maplibregl.Map) {
+function clusterReports(items: HistoricalReport[], map: maplibregl.Map) {
   const used = new Set<string>()
-  const groups: Incident[][] = []
-  for (const incident of items) {
-    if (used.has(incident.id)) continue
-    const point = map.project([incident.lng, incident.lat])
-    const group = [incident]
-    used.add(incident.id)
+  const groups: HistoricalReport[][] = []
+  for (const report of items) {
+    if (used.has(report.id)) continue
+    const point = map.project([report.longitude, report.latitude])
+    const group = [report]
+    used.add(report.id)
     for (const other of items) {
       if (used.has(other.id)) continue
-      const otherPoint = map.project([other.lng, other.lat])
+      const otherPoint = map.project([other.longitude, other.latitude])
       const dx = point.x - otherPoint.x
       const dy = point.y - otherPoint.y
       if (dx * dx + dy * dy < 4 * 4) {

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { RouteAlternative, RouteSafety } from '../../types/api'
 
 const outfit = { fontFamily: 'Outfit, sans-serif' }
@@ -11,6 +12,7 @@ type RoutePanelProps = {
   safetyRankingAvailable: boolean
   onSelect: (id: string) => void
   onRetry: () => void
+  notice?: ReactNode
 }
 
 export default function RoutePanel({
@@ -21,6 +23,7 @@ export default function RoutePanel({
   safetyRankingAvailable,
   onSelect,
   onRetry,
+  notice,
 }: RoutePanelProps) {
   if (status === 'idle') return null
   const selected = routes.find((route) => route.id === selectedId) ?? routes[0]
@@ -73,6 +76,7 @@ export default function RoutePanel({
               })}
             </div>
           )}
+          {notice}
         </>
       )}
     </div>
