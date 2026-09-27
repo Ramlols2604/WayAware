@@ -4,16 +4,29 @@ import PersonalInfoScreen from './PersonalInfoScreen'
 import PersonalizeScreen from './PersonalizeScreen'
 import SettingsScreen from './SettingsScreen'
 import WelcomeScreen from './WelcomeScreen'
+import {
+  ROUTE_PREFERENCE_STORAGE_KEY,
+  readStoredRoutePreference,
+  writeStoredRoutePreference,
+} from './map/routeExposure'
 import type { Profile } from './profile'
 
 type Screen = 'welcome' | 'personalize' | 'map' | 'settings' | 'personal-info'
 type RoutePreference = 'safest' | 'fastest'
 type ThemeChoice = 'dark' | 'light'
 
+function loadRoutePreference(): RoutePreference {
+  try {
+    return readStoredRoutePreference(window.localStorage.getItem(ROUTE_PREFERENCE_STORAGE_KEY))
+  } catch {
+    return 'safest'
+  }
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('welcome')
   const [profile, setProfile] = useState<Profile | null>(null)
-  const [routePreference, setRoutePreference] = useState<RoutePreference>('safest')
+  const [routePreference, setRoutePreference] = useState<RoutePreference>(loadRoutePreference)
   const [voiceAlerts, setVoiceAlerts] = useState(true)
   const [theme, setTheme] = useState<ThemeChoice>('dark')
 
@@ -30,17 +43,27 @@ export default function App() {
             }}
           />
         )}
-        {screen === 'map' && (
-          <MapScreen
-            onOpenSettings={() => setScreen('settings')}
-            onBack={() => setScreen('welcome')}
-            routePreference={routePreference}
-          />
+        {(screen === 'map' || screen === 'settings' || screen === 'personal-info') && (
+          <div className={screen === 'map' ? 'absolute inset-0' : 'hidden'}>
+            <MapScreen
+              active={screen === 'map'}
+              onOpenSettings={() => setScreen('settings')}
+              onBack={() => setScreen('welcome')}
+              routePreference={routePreference}
+            />
+          </div>
         )}
         {screen === 'settings' && (
           <SettingsScreen
             routePreference={routePreference}
-            onRoutePreference={setRoutePreference}
+            onRoutePreference={(value) => {
+              setRoutePreference(value)
+              try {
+                writeStoredRoutePreference(window.localStorage, value)
+              } catch {
+                // The choice still applies until the page is closed.
+              }
+            }}
             voiceAlerts={voiceAlerts}
             onVoiceAlerts={setVoiceAlerts}
             theme={theme}

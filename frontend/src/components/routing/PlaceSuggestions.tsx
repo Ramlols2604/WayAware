@@ -46,7 +46,7 @@ export default function PlaceSuggestions({ status, suggestions, onSelect, onRetr
             ))}
           </ul>
           {suggestions[0]?.attribution && (
-            <p className="border-t border-[var(--wa-line)] px-3 py-1.5 text-[0.68rem] text-[var(--wa-text-muted)]" style={inter}>
+            <p className="truncate border-t border-[var(--wa-line)] px-3 py-1.5 text-[0.68rem] text-[var(--wa-text-muted)]" style={inter} title={suggestions[0].attribution}>
               {suggestions[0].attribution}
             </p>
           )}

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // any test runs, so vi.stubEnv can't reach it -- mock the module directly.
 vi.mock('../env', () => ({ apiBaseUrl: 'http://backend.test', mapboxPublicToken: '' }))
 
-const { requestAlongRoute, retrievePlace, resetApiSpecCache, searchPlaces } = await import('./wayawareApi')
+const { requestAlongRoute, requestRouteComparison, requestRouteExposure, requestRoutes, retrievePlace, resetApiSpecCache, searchPlaces } = await import('./wayawareApi')
 const { HISTORICAL_REPORT_WINDOW } = await import('../types/api')
 
 const OPENAPI_STUB = { paths: {}, components: { schemas: {} } }
@@ -97,6 +97,7 @@ describe('wayawareApi', () => {
 
     expect(suggestions).toHaveLength(2)
     expect(suggestions.every((s) => s.attribution === '© Mapbox search')).toBe(true)
+    expect(suggestions[0]).toMatchObject({ label: 'Place A', subtitle: 'NYC' })
   })
 
   it('posts the full route line and reads capped historical reports', async () => {
@@ -160,6 +161,114 @@ describe('wayawareApi', () => {
       timeOfDayKnown: false,
       distanceMeters: 18.4,
     })
+  })
+
+  it('requests a full-route exposure assessment without a marker limit', async () => {
+    const geometry = {
+      type: 'LineString' as const,
+      coordinates: [
+        [-73.98, 40.75],
+        [-73.97, 40.76],
+      ] as [number, number][],
+    }
+    let posted: { url?: string; init?: RequestInit } = {}
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/openapi.json')) return jsonResponse(OPENAPI_STUB)
+      posted = { url, init }
+      return jsonResponse({
+        assessment_status: 'assessed',
+        window: HISTORICAL_REPORT_WINDOW,
+        radius_m: 50,
+        coverage: {
+          detail: 'seven categories',
+          categories: [{ ky_cd: 109, ofns_desc: 'GRAND LARCENY' }],
+        },
+        route_categories: [
+          { ky_cd: 106, ofns_desc: 'FELONY ASSAULT', count: 8 },
+          { ky_cd: 109, ofns_desc: 'GRAND LARCENY', count: 140 },
+        ],
+        segments: [
+          {
+            id: '0',
+            geometry,
+            length_m: 100,
+            level: 'higher',
+            total_count: 140,
+            categories: [{ ky_cd: 109, ofns_desc: 'GRAND LARCENY', count: 140 }],
+            score: 999,
+          },
+        ],
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await requestRouteExposure(geometry)
+    const body = JSON.parse(String(posted.init?.body))
+
+    expect(posted.url).toBe('http://backend.test/crime/route-exposure')
+    expect(body.route).toEqual(geometry)
+    expect(body.radius_m).toBe(50)
+    expect(body.limit).toBeUndefined()
+    expect(result.assessmentStatus).toBe('assessed')
+    expect(result.segments[0]).toMatchObject({
+      id: '0',
+      level: 'higher',
+      totalCount: 140,
+      categories: [{ kyCd: 109, offense: 'GRAND LARCENY', count: 140 }],
+    })
+    expect(result.segments[0]).not.toHaveProperty('score')
+    expect(result.routeCategories).toEqual([
+      { kyCd: 106, offense: 'FELONY ASSAULT', count: 8 },
+      { kyCd: 109, offense: 'GRAND LARCENY', count: 140 },
+    ])
+  })
+
+  it('keeps every returned route geometry, duration, and distance', async () => {
+    const first = [
+      [-73.982708, 40.773253],
+      [-73.98, 40.76],
+      [-73.976658, 40.752528],
+    ] as [number, number][]
+    const second = [
+      [-73.982708, 40.773253],
+      [-73.99, 40.765],
+      [-73.976658, 40.752528],
+    ] as [number, number][]
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/openapi.json')) return jsonResponse(OPENAPI_STUB)
+      return jsonResponse({
+        routes: [
+          { geometry: { type: 'LineString', coordinates: first }, duration_seconds: 851.9, distance_meters: 3559 },
+          { geometry: { type: 'LineString', coordinates: second }, duration_seconds: 893.2, distance_meters: 3284 },
+        ],
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const routes = await requestRoutes({
+      origin: { longitude: -73.983028, latitude: 40.772814 },
+      destination: { longitude: -73.977151, latitude: 40.752734 },
+      mode: 'driving',
+    })
+
+    expect(routes).toEqual([
+      { id: 'route-1', durationSeconds: 851.9, distanceMeters: 3559, geometry: { type: 'LineString', coordinates: first }, safety: null },
+      { id: 'route-2', durationSeconds: 893.2, distanceMeters: 3284, geometry: { type: 'LineString', coordinates: second }, safety: null },
+    ])
+  })
+
+  it('requires a finite weight for every compared route', async () => {
+    const geometries = [
+      { type: 'LineString' as const, coordinates: [[-73.98, 40.75], [-73.97, 40.76]] as [number, number][] },
+      { type: 'LineString' as const, coordinates: [[-73.99, 40.75], [-73.98, 40.76]] as [number, number][] },
+    ]
+    const fetchMock = vi.fn(async () => jsonResponse({ weights: [12, 4] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(requestRouteComparison(geometries)).resolves.toEqual([12, 4])
+
+    fetchMock.mockResolvedValue(jsonResponse({ weights: [12] }))
+    await expect(requestRouteComparison(geometries)).rejects.toThrow('weight for every route')
   })
 
   it('lets an aborted historical-report request reject as an abort', async () => {

@@ -16,6 +16,7 @@ from app.db.spatial_queries import (
     ALONG_ROUTE_BBOX_SQL,
     ALONG_ROUTE_LATITUDE_SQL,
     ALONG_ROUTE_SQL,
+    EXPOSURE_SEGMENT_SQL,
 )
 
 CONNECT_TIMEOUT_SECONDS = 10
@@ -93,9 +94,68 @@ def fetch_along_route(
         connection.close()
 
 
-def _statement_timeout_sql(remaining_seconds: float) -> str:
+def fetch_route_exposure(
+    database_url: str,
+    *,
+    segments: list[dict[str, Any]],
+    radius_m: float,
+    start: datetime,
+    end: datetime,
+    codes: list[int],
+    budget_seconds: float = DATABASE_BUDGET_SECONDS,
+) -> list[dict[str, Any]]:
+    """Return every segment match, or raise without a partial list.
+
+    The segments are the full route cut without gaps. Membership is the
+    per-segment geography test in one statement. Connecting and executing
+    share the caller's budget. One route keeps the 15 second budget.
+    """
+    if not segments or budget_seconds <= 0:
+        raise CrimeDatabaseError("Historical incident query failed")
+    deadline = monotonic() + budget_seconds
+    timeout_seconds = max(1, math.ceil(budget_seconds))
+    try:
+        connection = psycopg.connect(
+            database_url,
+            connect_timeout=CONNECT_TIMEOUT_SECONDS,
+            sslmode="require",
+            options=f"-c statement_timeout={timeout_seconds}s",
+            row_factory=dict_row,
+        )
+    except psycopg.Error as exc:
+        raise CrimeDatabaseError("Historical incident query failed") from exc
+
+    try:
+        connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+        connection.read_only = True
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise CrimeDatabaseError("Historical incident query failed")
+        with connection.cursor() as cursor:
+            cursor.execute(_statement_timeout_sql(remaining, budget_seconds))
+            cursor.execute(
+                EXPOSURE_SEGMENT_SQL,
+                {
+                    "segments": json.dumps(segments),
+                    "radius_m": radius_m,
+                    "start": start,
+                    "end": end,
+                    "codes": codes,
+                },
+            )
+            return list(cursor.fetchall())
+    except psycopg.Error as exc:
+        raise CrimeDatabaseError("Historical incident query failed") from exc
+    finally:
+        connection.close()
+
+
+def _statement_timeout_sql(
+    remaining_seconds: float,
+    cap_seconds: float = DATABASE_BUDGET_SECONDS,
+) -> str:
     milliseconds = math.ceil(remaining_seconds * 1000)
-    milliseconds = min(int(DATABASE_BUDGET_SECONDS * 1000), max(1, milliseconds))
+    milliseconds = min(int(cap_seconds * 1000), max(1, milliseconds))
     # The value is this process's remaining budget, not request text.
     return "SET statement_timeout = '" + str(milliseconds) + "ms'"
 
