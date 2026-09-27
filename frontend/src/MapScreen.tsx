@@ -196,6 +196,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
   const safetyRankingAvailable = routes.some((route) => route.safety !== null)
+  const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
 
   useEffect(() => {
     const originPlace = places.origin.place
@@ -400,6 +401,15 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
                 />
               </div>
               <TravelModeSelector mode={travelMode} onChange={setTravelMode} />
+              {selectedPlaceAttribution && (
+                <p
+                  className="mt-1 truncate text-[0.68rem] text-[var(--wa-text-muted)]"
+                  style={inter}
+                  title={selectedPlaceAttribution}
+                >
+                  {selectedPlaceAttribution}
+                </p>
+              )}
             </div>
             <button
               type="button"

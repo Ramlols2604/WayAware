@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.routers.health import router as health_router
@@ -11,6 +12,19 @@ from app.routers.places import router as places_router
 from app.routers.routes import router as routes_router
 
 app = FastAPI()
+
+# The frontend dev server (Vite, see frontend/vite.config.ts) runs on
+# http://localhost:8443 and calls this API directly from the browser.
+# Content-Type must be allowed explicitly since a JSON POST body makes it a
+# non-simple request, which triggers a preflight OPTIONS check.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8443"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
 app.include_router(health_router)
 app.include_router(places_router)
 app.include_router(routes_router)
