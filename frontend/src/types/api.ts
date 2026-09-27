@@ -83,6 +83,43 @@ export type HistoricalReportResult = {
   incidents: HistoricalReport[]
 }
 
+export type ExposureLevel = 'lower' | 'moderate' | 'higher'
+
+export type ExposureCategoryCount = {
+  kyCd: number
+  offense: string
+  count: number
+}
+
+export type ExposureSegment = {
+  id: string
+  coordinates: [number, number][]
+  lengthMeters: number
+  level: ExposureLevel
+  totalCount: number
+  categories: ExposureCategoryCount[]
+}
+
+export type RouteExposureResult = {
+  assessmentStatus: 'assessed'
+  window: HistoricalReportWindow
+  radiusMeters: number
+  coverage: HistoricalReportCoverage
+  segments: ExposureSegment[]
+}
+
+export type ExposureStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+export type ExposureState = {
+  requestId: number
+  routeId: string | null
+  status: ExposureStatus
+  segments: ExposureSegment[]
+  selectedId: string | null
+  appliedWindow: HistoricalReportWindow | null
+  coverage: HistoricalReportCoverage | null
+}
+
 export type HistoricalReportStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
 
 export type HistoricalReportState = {

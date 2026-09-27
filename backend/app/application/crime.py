@@ -50,6 +50,17 @@ def time_of_day_known(source: str) -> bool:
     return source in VERIFIED_TIMESTAMP_SOURCES
 
 
+def require_historical_window(
+    start: datetime,
+    end: datetime,
+    earliest: datetime,
+    max_window_days: int,
+) -> None:
+    """Reject a window outside the configured historical bounds."""
+    _validate_configured_bounds(earliest, max_window_days)
+    _validate_window(start, end, earliest, max_window_days)
+
+
 def incidents_along_route(
     request: AlongRouteRequest,
     *,
@@ -57,8 +68,9 @@ def incidents_along_route(
     earliest: datetime,
     max_window_days: int,
 ) -> AlongRouteResponse:
-    _validate_configured_bounds(earliest, max_window_days)
-    _validate_window(request.start, request.end, earliest, max_window_days)
+    require_historical_window(
+        request.start, request.end, earliest, max_window_days
+    )
     if database_url is None or not database_url.strip():
         raise CrimeConfigurationError("Historical incidents are not configured")
 

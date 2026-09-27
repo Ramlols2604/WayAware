@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // any test runs, so vi.stubEnv can't reach it -- mock the module directly.
 vi.mock('../env', () => ({ apiBaseUrl: 'http://backend.test', mapboxPublicToken: '' }))
 
-const { requestAlongRoute, retrievePlace, resetApiSpecCache, searchPlaces } = await import('./wayawareApi')
+const { requestAlongRoute, requestRouteExposure, retrievePlace, resetApiSpecCache, searchPlaces } = await import('./wayawareApi')
 const { HISTORICAL_REPORT_WINDOW } = await import('../types/api')
 
 const OPENAPI_STUB = { paths: {}, components: { schemas: {} } }
@@ -161,6 +161,58 @@ describe('wayawareApi', () => {
       timeOfDayKnown: false,
       distanceMeters: 18.4,
     })
+  })
+
+  it('requests a full-route exposure assessment without a marker limit', async () => {
+    const geometry = {
+      type: 'LineString' as const,
+      coordinates: [
+        [-73.98, 40.75],
+        [-73.97, 40.76],
+      ] as [number, number][],
+    }
+    let posted: { url?: string; init?: RequestInit } = {}
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/openapi.json')) return jsonResponse(OPENAPI_STUB)
+      posted = { url, init }
+      return jsonResponse({
+        assessment_status: 'assessed',
+        window: HISTORICAL_REPORT_WINDOW,
+        radius_m: 50,
+        coverage: {
+          detail: 'seven categories',
+          categories: [{ ky_cd: 109, ofns_desc: 'GRAND LARCENY' }],
+        },
+        segments: [
+          {
+            id: '0',
+            geometry,
+            length_m: 100,
+            level: 'higher',
+            total_count: 140,
+            categories: [{ ky_cd: 109, ofns_desc: 'GRAND LARCENY', count: 140 }],
+            score: 999,
+          },
+        ],
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await requestRouteExposure(geometry)
+    const body = JSON.parse(String(posted.init?.body))
+
+    expect(posted.url).toBe('http://backend.test/crime/route-exposure')
+    expect(body.route).toEqual(geometry)
+    expect(body.radius_m).toBe(50)
+    expect(body.limit).toBeUndefined()
+    expect(result.assessmentStatus).toBe('assessed')
+    expect(result.segments[0]).toMatchObject({
+      id: '0',
+      level: 'higher',
+      totalCount: 140,
+      categories: [{ kyCd: 109, offense: 'GRAND LARCENY', count: 140 }],
+    })
+    expect(result.segments[0]).not.toHaveProperty('score')
   })
 
   it('lets an aborted historical-report request reject as an abort', async () => {

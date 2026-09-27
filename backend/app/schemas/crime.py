@@ -158,6 +158,47 @@ class RouteIncident(BaseModel):
     longitude: float
 
 
+class RouteExposureRequest(BaseModel):
+    route: LineStringRoute
+    radius_m: float = Field(default=50, gt=0, le=MAX_RADIUS_M)
+    start: datetime
+    end: datetime
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> RouteExposureRequest:
+        _aware(self.start, "start")
+        _aware(self.end, "end")
+        if self.start >= self.end:
+            raise ValueError("start must be before end")
+        return self
+
+
+ExposureLevel = Literal["lower", "moderate", "higher"]
+
+
+class ExposureCategoryCount(BaseModel):
+    ky_cd: int
+    ofns_desc: str
+    count: int = Field(ge=0)
+
+
+class ExposureSegment(BaseModel):
+    id: str
+    geometry: LineStringRoute
+    length_m: float = Field(gt=0)
+    level: ExposureLevel
+    total_count: int = Field(ge=0)
+    categories: list[ExposureCategoryCount]
+
+
+class RouteExposureResponse(BaseModel):
+    assessment_status: Literal["assessed"]
+    window: CrimeWindow
+    radius_m: float
+    coverage: Coverage
+    segments: list[ExposureSegment]
+
+
 class AlongRouteResponse(BaseModel):
     window: CrimeWindow
     radius_m: float

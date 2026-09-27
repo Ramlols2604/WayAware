@@ -5,7 +5,10 @@ import {
   HISTORICAL_REPORT_WINDOW,
   type HistoricalReport,
   type HistoricalReportResult,
+  type ExposureLevel,
+  type ExposureSegment,
   type LineStringGeometry,
+  type RouteExposureResult,
   type PlaceSuggestion,
   type ResolvedPlace,
   type RouteAlternative,
@@ -123,6 +126,23 @@ export async function requestAlongRoute(
     }),
   })
   return parseAlongRoute(data)
+}
+
+export async function requestRouteExposure(
+  geometry: LineStringGeometry,
+  signal?: AbortSignal,
+): Promise<RouteExposureResult> {
+  const data = await requestJson('/crime/route-exposure', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      route: geometry,
+      radius_m: HISTORICAL_REPORT_RADIUS_M,
+      start: HISTORICAL_REPORT_WINDOW.start,
+      end: HISTORICAL_REPORT_WINDOW.end,
+    }),
+  })
+  return parseRouteExposure(data)
 }
 
 export async function requestRoutes(endpoints: RouteEndpoints): Promise<RouteAlternative[]> {
@@ -398,6 +418,65 @@ function parseAlongRoute(data: unknown): HistoricalReportResult {
     timestampQuality: 'unverified',
     incidents,
   }
+}
+
+function parseRouteExposure(data: unknown): RouteExposureResult {
+  if (!isRecord(data) || data.assessment_status !== 'assessed' || !Array.isArray(data.segments)) {
+    throw new WayAwareApiError('Route exposure was not returned.')
+  }
+  if (!isRecord(data.window) || !isRecord(data.coverage)) {
+    throw new WayAwareApiError('Route exposure was not returned.')
+  }
+  const start = readString(data.window, [/^start$/i])
+  const end = readString(data.window, [/^end$/i])
+  const detail = readString(data.coverage, [/^detail$/i])
+  const radiusMeters = readNumber(data, [/^radius_m$/i])
+  if (!start || !end || !detail || radiusMeters === null) {
+    throw new WayAwareApiError('Route exposure was not returned.')
+  }
+  const categories = Array.isArray(data.coverage.categories) ? data.coverage.categories.filter(isRecord) : []
+  return {
+    assessmentStatus: 'assessed',
+    window: { start, end },
+    radiusMeters,
+    coverage: {
+      detail,
+      categories: categories.map((category) => ({
+        kyCd: readNumber(category, [/ky_cd/i]) ?? 0,
+        offense: readString(category, [/ofns_desc/i]) ?? 'Historical report',
+      })),
+    },
+    segments: data.segments.filter(isRecord).map(parseExposureSegment),
+  }
+}
+
+function parseExposureSegment(row: Record<string, unknown>): ExposureSegment {
+  const id = readString(row, [/^id$/i])
+  const geometry = isRecord(row.geometry) ? row.geometry : null
+  const coordinates = geometry && Array.isArray(geometry.coordinates) ? geometry.coordinates.filter(isLngLat) : []
+  const level = exposureLevel(row.level)
+  const totalCount = readNumber(row, [/total_count/i])
+  if (!id || coordinates.length < 2 || !level || totalCount === null) {
+    throw new WayAwareApiError('Route exposure was not returned.')
+  }
+  const categories = Array.isArray(row.categories) ? row.categories.filter(isRecord) : []
+  return {
+    id,
+    coordinates,
+    lengthMeters: readNumber(row, [/length_m/i]) ?? 0,
+    level,
+    totalCount,
+    categories: categories.map((category) => ({
+      kyCd: readNumber(category, [/ky_cd/i]) ?? 0,
+      offense: readString(category, [/ofns_desc/i]) ?? 'Historical report',
+      count: readNumber(category, [/^count$/i]) ?? 0,
+    })),
+  }
+}
+
+function exposureLevel(value: unknown): ExposureLevel | null {
+  if (value === 'lower' || value === 'moderate' || value === 'higher') return value
+  return null
 }
 
 function parseHistoricalReport(row: Record<string, unknown>): HistoricalReport {

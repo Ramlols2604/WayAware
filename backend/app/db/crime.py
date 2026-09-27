@@ -16,6 +16,7 @@ from app.db.spatial_queries import (
     ALONG_ROUTE_BBOX_SQL,
     ALONG_ROUTE_LATITUDE_SQL,
     ALONG_ROUTE_SQL,
+    EXPOSURE_SEGMENT_SQL,
 )
 
 CONNECT_TIMEOUT_SECONDS = 10
@@ -87,6 +88,60 @@ def fetch_along_route(
                 )
                 collected.extend(cursor.fetchall())
         return collected
+    except psycopg.Error as exc:
+        raise CrimeDatabaseError("Historical incident query failed") from exc
+    finally:
+        connection.close()
+
+
+def fetch_route_exposure(
+    database_url: str,
+    *,
+    segments: list[dict[str, Any]],
+    radius_m: float,
+    start: datetime,
+    end: datetime,
+    codes: list[int],
+) -> list[dict[str, Any]]:
+    """Return every segment match, or raise without a partial list.
+
+    The segments are the full route cut without gaps. Membership is the
+    per-segment geography test in one statement. Connecting and executing
+    share the 15 second budget.
+    """
+    if not segments:
+        raise CrimeDatabaseError("Historical incident query failed")
+    deadline = monotonic() + DATABASE_BUDGET_SECONDS
+    try:
+        connection = psycopg.connect(
+            database_url,
+            connect_timeout=CONNECT_TIMEOUT_SECONDS,
+            sslmode="require",
+            options=f"-c statement_timeout={STATEMENT_TIMEOUT}",
+            row_factory=dict_row,
+        )
+    except psycopg.Error as exc:
+        raise CrimeDatabaseError("Historical incident query failed") from exc
+
+    try:
+        connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+        connection.read_only = True
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise CrimeDatabaseError("Historical incident query failed")
+        with connection.cursor() as cursor:
+            cursor.execute(_statement_timeout_sql(remaining))
+            cursor.execute(
+                EXPOSURE_SEGMENT_SQL,
+                {
+                    "segments": json.dumps(segments),
+                    "radius_m": radius_m,
+                    "start": start,
+                    "end": end,
+                    "codes": codes,
+                },
+            )
+            return list(cursor.fetchall())
     except psycopg.Error as exc:
         raise CrimeDatabaseError("Historical incident query failed") from exc
     finally:

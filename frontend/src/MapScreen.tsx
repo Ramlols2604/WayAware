@@ -5,7 +5,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import PlaceSuggestions from './components/routing/PlaceSuggestions'
 import RoutePanel from './components/routing/RoutePanel'
 import TravelModeSelector from './components/routing/TravelModeSelector'
-import { setRouteLine, fitRoute } from './map/routeLayer'
+import { ROUTE_HIT_LAYER_ID, fitRoute, segmentIdFromClick, setRouteSegments } from './map/routeLayer'
 import {
   EMPTY_REPORTS_MESSAGE,
   applyHistoricalReportError,
@@ -17,9 +17,21 @@ import {
   idleHistoricalReports,
   truncatedReportsMessage,
 } from './map/historicalReports'
+import {
+  COLOR_EXPLANATION,
+  SEGMENT_DISTANCE_LABEL,
+  SEGMENT_EXPLANATION,
+  ZERO_SEGMENT_MESSAGE,
+  applyExposureError,
+  applyExposureResponse,
+  beginExposureRequest,
+  exposureForRoute,
+  exposureLevelLabel,
+  idleExposure,
+} from './map/routeExposure'
 import { useRoutePlaces } from './routing/usePlaceSearch'
-import { requestAlongRoute, requestRoutes } from './api/wayawareApi'
-import type { HistoricalReport, HistoricalReportState, RouteAlternative, RouteSafety, TravelMode } from './types/api'
+import { requestAlongRoute, requestRouteExposure, requestRoutes } from './api/wayawareApi'
+import type { ExposureSegment, ExposureState, HistoricalReport, HistoricalReportState, RouteAlternative, RouteSafety, TravelMode } from './types/api'
 
 const MANHATTAN = { lat: 40.7549, lng: -73.9857 }
 const HISTORICAL_MARKER = '#334155'
@@ -68,12 +80,16 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const [routeAttempt, setRouteAttempt] = useState(0)
   const [reportAttempt, setReportAttempt] = useState(0)
   const [reports, setReports] = useState<HistoricalReportState>(idleHistoricalReports)
+  const [exposureAttempt, setExposureAttempt] = useState(0)
+  const [exposure, setExposure] = useState<ExposureState>(idleExposure)
+  const [colorHelpOpen, setColorHelpOpen] = useState(false)
   const [user, setUser] = useState(MANHATTAN)
   const [mapReady, setMapReady] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const ignoreMapClick = useRef(false)
   const reportRequestId = useRef(0)
+  const exposureRequestId = useRef(0)
 
   useEffect(() => {
     if (!navigator.geolocation) return
@@ -93,7 +109,9 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
   const visibleReports = reportsForRoute(reports, selectedRoute?.id ?? null)
+  const visibleExposure = exposureForRoute(exposure, selectedRoute?.id ?? null)
   const selected = visibleReports.reports.find((report) => report.id === visibleReports.selectedId) ?? null
+  const selectedSegment = visibleExposure.segments.find((segment) => segment.id === visibleExposure.selectedId) ?? null
   const safetyRankingAvailable = routes.some((route) => route.safety !== null)
   const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
 
@@ -159,6 +177,33 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     }
   }, [selectedRoute, reportAttempt])
 
+  useEffect(() => {
+    const route = selectedRoute
+    const geometry = route?.geometry
+    if (!route || !geometry) {
+      const requestId = exposureRequestId.current + 1
+      exposureRequestId.current = requestId
+      setExposure({ ...idleExposure, requestId })
+      return
+    }
+    const requestId = exposureRequestId.current + 1
+    exposureRequestId.current = requestId
+    const controller = new AbortController()
+    setColorHelpOpen(false)
+    setExposure(beginExposureRequest(requestId, route.id))
+    requestRouteExposure(geometry, controller.signal)
+      .then((response) => {
+        setExposure((current) => applyExposureResponse(current, requestId, response))
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
+        setExposure((current) => applyExposureError(current, requestId))
+      })
+    return () => {
+      controller.abort()
+    }
+  }, [selectedRoute, exposureAttempt])
+
   function recenter() {
     const map = mapRef.current
     if (!map) return
@@ -193,8 +238,28 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           return
         }
         setReports((current) => ({ ...current, selectedId: null }))
+        setExposure((current) => ({ ...current, selectedId: null }))
       })
       map.once('load', () => {
+        const loaded = map
+        if (loaded) {
+          setRouteSegments(loaded, null)
+          loaded.on('click', ROUTE_HIT_LAYER_ID, (event) => {
+            const segmentId = segmentIdFromClick(event)
+            if (!segmentId) return
+            ignoreMapClick.current = true
+            setReports((current) => ({ ...current, selectedId: null }))
+            setExposure((current) =>
+              current.status === 'ready' ? { ...current, selectedId: segmentId } : current,
+            )
+          })
+          loaded.on('mouseenter', ROUTE_HIT_LAYER_ID, () => {
+            loaded.getCanvas().style.cursor = 'pointer'
+          })
+          loaded.on('mouseleave', ROUTE_HIT_LAYER_ID, () => {
+            loaded.getCanvas().style.cursor = ''
+          })
+        }
         map?.fitBounds(
           [
             [-74.255, 40.496],
@@ -266,9 +331,31 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady) return
-    setRouteLine(map, selectedRoute?.geometry ?? null)
     if (selectedRoute) fitRoute(map, selectedRoute.geometry)
   }, [mapReady, selectedRoute])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+    const geometry = selectedRoute?.geometry
+    if (!geometry || visibleExposure.status !== 'ready') {
+      setRouteSegments(
+        map,
+        geometry
+          ? [{ segmentId: '', level: 'unavailable', coordinates: geometry.coordinates }]
+          : null,
+      )
+      return
+    }
+    setRouteSegments(
+      map,
+      visibleExposure.segments.map((segment) => ({
+        segmentId: segment.id,
+        level: segment.level,
+        coordinates: segment.coordinates,
+      })),
+    )
+  }, [mapReady, selectedRoute, visibleExposure])
 
   return (
     <div className="absolute inset-0 bg-[#f8f8f8]">
@@ -358,17 +445,26 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           onClick={recenter}
           aria-label="Recenter on your location"
           className={`pointer-events-auto absolute right-3 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none ${
-            selected ? 'bottom-72' : routeStatus === 'ready' ? 'bottom-80' : routeStatus !== 'idle' ? 'bottom-52' : 'bottom-6'
+            selected || selectedSegment ? 'bottom-72' : routeStatus === 'ready' ? 'bottom-80' : routeStatus !== 'idle' ? 'bottom-52' : 'bottom-6'
           }`}
         >
           <LocateIcon />
         </button>
 
-        {selected && (
+        {selectedSegment && visibleExposure.appliedWindow && (
+          <SegmentSummary
+            key={selectedSegment.id}
+            segment={selectedSegment}
+            windowLabel={formatAppliedWindow(visibleExposure.appliedWindow)}
+            onClose={() => setExposure((current) => ({ ...current, selectedId: null }))}
+          />
+        )}
+
+        {selected && !selectedSegment && (
           <IncidentSheet key={selected.id} report={selected} onClose={() => setReports((current) => ({ ...current, selectedId: null }))} />
         )}
 
-        {!selected && (
+        {!selected && !selectedSegment && (
           <RoutePanel
             status={routeStatus}
             routes={routes}
@@ -377,7 +473,17 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
             safetyRankingAvailable={safetyRankingAvailable}
             onSelect={setSelectedRouteId}
             onRetry={() => setRouteAttempt((attempt) => attempt + 1)}
-            notice={<HistoricalReportNotice state={visibleReports} onRetry={() => setReportAttempt((attempt) => attempt + 1)} />}
+            notice={
+              <>
+                <RouteColorControl
+                  open={colorHelpOpen}
+                  failed={visibleExposure.status === 'error'}
+                  onToggle={() => setColorHelpOpen((open) => !open)}
+                  onRetry={() => setExposureAttempt((attempt) => attempt + 1)}
+                />
+                <HistoricalReportNotice state={visibleReports} onRetry={() => setReportAttempt((attempt) => attempt + 1)} />
+              </>
+            }
           />
         )}
 
@@ -389,6 +495,107 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
         </p>
         )}
       </div>
+    </div>
+  )
+}
+
+function RouteColorControl({
+  open,
+  failed,
+  onToggle,
+  onRetry,
+}: {
+  open: boolean
+  failed: boolean
+  onToggle: () => void
+  onRetry: () => void
+}) {
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        aria-label="About route colors"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex size-8 items-center justify-center rounded-full text-[var(--wa-icon-soft)] hover:bg-[var(--wa-hover-strong)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
+      >
+        <InfoIcon />
+      </button>
+      {open && (
+        <p className="mt-1 text-[0.78rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
+          {COLOR_EXPLANATION}
+        </p>
+      )}
+      {failed && (
+        <button type="button" onClick={onRetry} className="mt-1 text-left text-[0.84rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+          Route colors unavailable. Try again.
+        </button>
+      )}
+    </div>
+  )
+}
+
+function SegmentSummary({
+  segment,
+  windowLabel,
+  onClose,
+}: {
+  segment: ExposureSegment
+  windowLabel: string
+  onClose: () => void
+}) {
+  const [shown, setShown] = useState(false)
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShown(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Most reported nearby"
+      className={`pointer-events-auto absolute z-20 border border-[var(--wa-line)] bg-[var(--wa-card)] px-5 pt-5 pb-6 shadow-[var(--wa-sheet-shadow)] transition-transform duration-300 ease-out max-[479px]:inset-x-0 max-[479px]:bottom-0 max-[479px]:rounded-t-3xl max-[479px]:border-b-0 min-[480px]:inset-x-3 min-[480px]:bottom-3 min-[480px]:rounded-3xl ${
+        shown ? 'translate-y-0' : 'translate-y-full'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close summary"
+        className="absolute top-3 right-3 flex size-9 items-center justify-center rounded-full text-[var(--wa-icon-faint)] hover:bg-[var(--wa-hover-strong)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
+      >
+        <CloseIcon />
+      </button>
+      <h2 className="pr-10 text-[1.25rem] leading-tight font-bold text-[var(--wa-text)]" style={outfit}>
+        Most reported nearby
+      </h2>
+      <p className="mt-1 text-[0.92rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+        {exposureLevelLabel(segment.level)}
+      </p>
+      {segment.totalCount === 0 ? (
+        <p className="mt-3 text-[0.9rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
+          {ZERO_SEGMENT_MESSAGE}
+        </p>
+      ) : (
+        <ul className="mt-3 flex flex-col gap-1.5">
+          {segment.categories.map((category) => (
+            <li key={category.kyCd} className="flex items-baseline justify-between gap-3 text-[0.9rem]" style={inter}>
+              <span className="text-[var(--wa-text)]">{category.offense}</span>
+              <span className="shrink-0 font-semibold text-[var(--wa-text)]">{category.count.toLocaleString('en-US')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
+        {windowLabel}
+      </p>
+      <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
+        {SEGMENT_DISTANCE_LABEL}
+      </p>
+      <p className="mt-1 text-[0.78rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
+        {SEGMENT_EXPLANATION}
+      </p>
     </div>
   )
 }
@@ -616,6 +823,16 @@ function LocateIcon() {
       <circle cx="11" cy="11" r="3" fill="#3b82f6" />
       <path d="M11 2.5v2.2M11 17.3v2.2M2.5 11h2.2M17.3 11h2.2" stroke="#3b82f6" strokeWidth="1.7" strokeLinecap="round" />
       <circle cx="11" cy="11" r="6.2" stroke="#3b82f6" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+function InfoIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <circle cx="9" cy="9" r="6.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M9 8.1V12.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="9" cy="6" r="0.8" fill="currentColor" />
     </svg>
   )
 }

@@ -241,6 +241,14 @@ def _short_delta_lon(lon1: float, lon2: float) -> float | None:
     return delta
 
 
+def geodesic_meters(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    """Ground distance in meters on the sphere used for corridor bounds."""
+    delta_lon = _short_delta_lon(lon1, lon2)
+    if delta_lon is None:
+        raise ValueError("segment crosses the antimeridian")
+    return _angular_distance(lat1, lat2, delta_lon) * _EQUATORIAL_RADIUS_M
+
+
 def _angular_distance(lat1: float, lat2: float, delta_lon: float) -> float:
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)

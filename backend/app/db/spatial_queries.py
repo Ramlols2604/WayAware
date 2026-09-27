@@ -55,6 +55,37 @@ ALONG_ROUTE_BBOX_SQL = (
     + _ORDER_AND_LIMIT
 )
 
+# One statement for every segment. Each lateral lookup uses the latitude and
+# longitude index. ST_DWithin on geography is the membership test; the box is
+# only a superset prefilter. Rows are not limited to the newest 100.
+EXPOSURE_SEGMENT_SQL = """
+SELECT s.id, c.source, c.source_id, c.ky_cd
+FROM jsonb_to_recordset(%(segments)s::jsonb) AS s(
+    id int,
+    min_lat float8,
+    max_lat float8,
+    min_lon float8,
+    max_lon float8,
+    line jsonb
+)
+JOIN LATERAL (
+    SELECT DISTINCT source, source_id, ky_cd
+    FROM crime_incidents
+    WHERE latitude >= s.min_lat
+      AND latitude <= s.max_lat
+      AND longitude >= s.min_lon
+      AND longitude <= s.max_lon
+      AND occurred_at >= %(start)s
+      AND occurred_at < %(end)s
+      AND ky_cd = ANY(%(codes)s)
+      AND ST_DWithin(
+            ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+            ST_GeomFromGeoJSON(s.line)::geography,
+            %(radius_m)s
+          )
+) AS c ON true
+"""
+
 ALONG_ROUTE_LATITUDE_SQL = (
     _SELECT_LIST
     + """
