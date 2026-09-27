@@ -176,20 +176,31 @@ function coordinateValue(schema: JsonSchema, point: { longitude: number; latitud
 
 function extractSuggestions(data: unknown): PlaceSuggestion[] {
   const rows = findObjectArray(data)
+  const attribution = isRecord(data) ? (readString(data, [/^attribution$/i]) ?? '') : ''
   const suggestions: PlaceSuggestion[] = []
   for (const row of rows) {
     const mapboxId = readString(row, [/mapbox[_ ]?id/i, /^id$/i])
     if (!mapboxId) continue
     const label = readString(row, [/full[_ ]?address/i, /^name$/i, /place[_ ]?formatted/i, /place[_ ]?name/i, /^label$/i, /^text$/i]) ?? mapboxId
     const subtitle = readString(row, [/place[_ ]?formatted/i, /^address$/i, /description/i]) ?? ''
-    suggestions.push({ mapboxId, label, subtitle: subtitle === label ? '' : subtitle })
+    suggestions.push({ mapboxId, label, subtitle: subtitle === label ? '' : subtitle, attribution })
   }
   return suggestions
 }
 
+// Our backend nests a resolved place's fields under a "place" key
+// (`{ place: { mapbox_id, name, longitude, latitude, ... }, attribution }`),
+// which isn't a GeoJSON Feature/FeatureCollection and has no "properties"
+// wrapper, so the generic readers below wouldn't otherwise find it.
+function unwrapPlace(data: unknown): Record<string, unknown> | null {
+  if (!isRecord(data)) return null
+  return isRecord(data.place) ? data.place : null
+}
+
 function extractPlace(data: unknown, mapboxId: string): ResolvedPlace | null {
   const feature = findFeature(data)
-  const source = feature ?? (isRecord(data) ? data : null)
+  const wrapped = unwrapPlace(data)
+  const source = feature ?? wrapped ?? (isRecord(data) ? data : null)
   if (!source) return null
   const coordinates = readCoordinates(source) ?? (feature ? readCoordinates(feature) : null)
   if (!coordinates) return null
@@ -197,7 +208,14 @@ function extractPlace(data: unknown, mapboxId: string): ResolvedPlace | null {
     readString(source, [/full[_ ]?address/i, /^name$/i, /place[_ ]?formatted/i, /place[_ ]?name/i]) ??
     (feature ? readString(feature, [/full[_ ]?address/i, /^name$/i]) : null) ??
     mapboxId
-  return { mapboxId: readString(source, [/mapbox[_ ]?id/i]) ?? mapboxId, name, longitude: coordinates[0], latitude: coordinates[1] }
+  const attribution = isRecord(data) ? (readString(data, [/^attribution$/i]) ?? '') : ''
+  return {
+    mapboxId: readString(source, [/mapbox[_ ]?id/i]) ?? mapboxId,
+    name,
+    longitude: coordinates[0],
+    latitude: coordinates[1],
+    attribution,
+  }
 }
 
 function extractRoutes(data: unknown): RouteAlternative[] {

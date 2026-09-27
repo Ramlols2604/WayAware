@@ -4,6 +4,8 @@ export type PlaceSuggestion = {
   mapboxId: string
   label: string
   subtitle: string
+  /** Provider attribution string; must be displayed alongside these results. */
+  attribution: string
 }
 
 export type ResolvedPlace = {
@@ -11,6 +13,8 @@ export type ResolvedPlace = {
   name: string
   longitude: number
   latitude: number
+  /** Provider attribution string; must be displayed alongside the selected place. */
+  attribution: string
 }
 
 export type LineStringGeometry = {

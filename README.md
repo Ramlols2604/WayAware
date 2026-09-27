@@ -56,6 +56,51 @@ next search — this matches Mapbox's session-based billing model.
 Both endpoints return a Mapbox `attribution` string that must be displayed
 alongside results.
 
+### CORS
+
+The backend allows browser requests from `http://localhost:8443` (the
+frontend's Vite dev server default port) for `GET`/`POST` with a
+`Content-Type` header, no credentials. This is the only origin currently
+allowed; add further origins in `app/main.py` as real frontend deployments
+exist.
+
+## Frontend
+
+From `frontend/`, using Node 22 and pnpm:
+
+```bash
+pnpm install
+```
+
+Copy the environment template:
+
+```bash
+cp .env.example .env
+```
+
+Set `VITE_API_BASE_URL` in `frontend/.env` to the running backend's URL
+(`http://localhost:8000` for local development against `uvicorn --port
+8000`). `VITE_MAPBOX_PUBLIC_TOKEN` can stay blank — the map's base tiles come
+from OpenFreeMap, not Mapbox, and the app never needs a Mapbox token
+client-side; all Mapbox calls happen server-side in the backend.
+
+Run the dev server (must match the backend's allowed CORS origin, port
+`8443`):
+
+```bash
+pnpm dev
+```
+
+Build and test:
+
+```bash
+pnpm build
+pnpm test
+```
+
+The backend must be running (see above) with `MAPBOX_ACCESS_TOKEN` set for
+destination search, place selection, and route rendering to work end to end.
+
 ## Deployment (DigitalOcean App Platform)
 
 - **Source directory:** `backend/`
@@ -69,6 +114,6 @@ alongside results.
 - **Health check:** `GET /health` — already returns `{"status": "ok"}` with
   no dependencies, so it can be used as-is as the App Platform health check
   path.
-- **CORS:** not configured. Add `CORSMiddleware` (restricted to the exact
-  frontend origin, no wildcard) only if a browser-based frontend calls this
-  API cross-origin; a native mobile client does not need it.
+- **CORS:** configured for local development only (`http://localhost:8443`,
+  see above). Update the allowed origin(s) in `app/main.py` to the deployed
+  frontend's real URL once one exists; keep it an exact origin, no wildcard.
