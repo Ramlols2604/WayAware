@@ -114,6 +114,11 @@ def test_counts_a_complaint_once_and_breaks_category_ties_by_code():
     assert [item.ky_cd for item in segment.categories] == [101, 106, 105]
     assert segment.categories[0].count == 2
     assert segment.level == "lower"
+    assert [(item.ky_cd, item.count) for item in route_categories(pieces, rows)] == [
+        (101, 2),
+        (106, 2),
+        (105, 1),
+    ]
 
 
 def test_route_categories_count_a_shared_complaint_once():
@@ -166,6 +171,29 @@ def test_zero_matches_stay_in_the_lower_band_with_no_categories():
     assert segment.total_count == 0
     assert segment.categories == []
     assert segment.level == "lower"
+
+
+def test_segment_keeps_counts_outside_its_displayed_top_three():
+    pieces = split_route([[-73.98, 40.75], offset_north(-73.98, 40.75, 100)])
+    rows = [
+        {"id": 0, "source": "nypd_complaint", "source_id": "a", "ky_cd": 109},
+        {"id": 0, "source": "nypd_complaint", "source_id": "b", "ky_cd": 109},
+        {"id": 0, "source": "nypd_complaint", "source_id": "c", "ky_cd": 109},
+        {"id": 0, "source": "nypd_complaint", "source_id": "d", "ky_cd": 110},
+        {"id": 0, "source": "nypd_complaint", "source_id": "e", "ky_cd": 110},
+        {"id": 0, "source": "nypd_complaint", "source_id": "f", "ky_cd": 105},
+        {"id": 0, "source": "nypd_complaint", "source_id": "g", "ky_cd": 101},
+    ]
+    segment = summarize_segments(pieces, rows)[0]
+    assert [(item.ky_cd, item.count) for item in segment.categories] == [
+        (109, 3),
+        (110, 2),
+        (101, 1),
+        (105, 1),
+    ]
+    assert segment.level == exposure_level(
+        exposure_score({109: 3, 110: 2, 105: 1, 101: 1}, segment.length_m)
+    )
 
 
 def test_category_rank_prefers_count_then_code():

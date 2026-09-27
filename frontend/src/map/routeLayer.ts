@@ -77,9 +77,12 @@ export function setRouteSegments(map: MapLibreMap, segments: DrawnRouteSegment[]
   })
 }
 
-export function segmentIdFromClick(event: MapLayerMouseEvent) {
-  const value = event.features?.[0]?.properties?.segmentId
-  return typeof value === 'string' && value ? value : null
+export function segmentHitFromClick(event: MapLayerMouseEvent) {
+  const properties = event.features?.[0]?.properties
+  const segmentId = properties?.segmentId
+  if (typeof segmentId !== 'string' || !segmentId) return null
+  const level = properties?.level
+  return { segmentId, level: typeof level === 'string' ? level : '' }
 }
 
 export function fitRoute(map: MapLibreMap, geometry: LineStringGeometry) {

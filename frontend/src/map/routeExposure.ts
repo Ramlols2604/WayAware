@@ -11,11 +11,15 @@ export const SEGMENT_EXPLANATION =
 export const COLOR_EXPLANATION =
   'Blue is lower historical exposure, yellow is moderate, and red is higher. Gray means the assessment is loading or unavailable. Blue is not a guarantee of safety. Colors use every matching historical report in the seven included categories within 50 m of the route. They are not a prediction.'
 
-export const ROUTE_SUMMARY_LABEL = 'Most encountered on your route'
+export const ROUTE_SUMMARY_LABEL = 'Most Encountered on Route'
 
 export const ROUTE_SUMMARY_CONTEXT = 'Most reported historically within 50 m of this route.'
 
+export const NO_ROUTE_SUMMARY_MATCH =
+  'No matching categories from the route summary in this section.'
+
 const ROUTE_SUMMARY_LIMIT = 5
+const SEGMENT_CATEGORY_LIMIT = 3
 
 export const idleExposure: ExposureState = {
   requestId: 0,
@@ -28,11 +32,43 @@ export const idleExposure: ExposureState = {
   coverage: null,
 }
 
+function byCountThenCode(left: ExposureCategoryCount, right: ExposureCategoryCount) {
+  return right.count - left.count || left.kyCd - right.kyCd
+}
+
+function positiveCategories(categories: ExposureCategoryCount[]) {
+  return categories.filter((category) => category.count > 0).sort(byCountThenCode)
+}
+
 export function displayRouteCategories(categories: ExposureCategoryCount[]) {
-  return [...categories]
-    .sort((left, right) => right.count - left.count || left.kyCd - right.kyCd)
+  return positiveCategories(categories)
     .slice(0, ROUTE_SUMMARY_LIMIT)
     .sort((left, right) => left.offense.localeCompare(right.offense))
+}
+
+export function displaySegmentCategories(
+  segmentCategories: ExposureCategoryCount[],
+  routeCategories: ExposureCategoryCount[],
+) {
+  const routeNames = new Map(
+    positiveCategories(routeCategories)
+      .slice(0, ROUTE_SUMMARY_LIMIT)
+      .map((category) => [category.kyCd, category.offense]),
+  )
+  return positiveCategories(segmentCategories)
+    .filter((category) => routeNames.has(category.kyCd))
+    .slice(0, SEGMENT_CATEGORY_LIMIT)
+    .map((category) => ({
+      kyCd: category.kyCd,
+      offense: routeNames.get(category.kyCd) ?? category.offense,
+      count: category.count,
+    }))
+    .sort((left, right) => left.offense.localeCompare(right.offense))
+}
+
+export function selectionForSegmentTap(level: string, segmentId: string) {
+  if (level === 'moderate' || level === 'higher') return segmentId
+  return null
 }
 
 export function beginExposureRequest(requestId: number, routeId: string): ExposureState {

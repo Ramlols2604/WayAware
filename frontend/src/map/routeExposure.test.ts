@@ -5,7 +5,9 @@ import {
   applyExposureResponse,
   beginExposureRequest,
   displayRouteCategories,
+  displaySegmentCategories,
   exposureForRoute,
+  selectionForSegmentTap,
 } from './routeExposure'
 
 function segment(id: string): ExposureSegment {
@@ -63,6 +65,51 @@ describe('route exposure state', () => {
       'MURDER & NON-NEGL. MANSLAUGHTER',
       'ROBBERY',
     ])
+  })
+
+  it('keeps a section count only when that category is also on the route', () => {
+    const route = [
+      { kyCd: 107, offense: 'BURGLARY', count: 900 },
+      { kyCd: 105, offense: 'ROBBERY', count: 800 },
+      { kyCd: 106, offense: 'FELONY ASSAULT', count: 700 },
+      { kyCd: 101, offense: 'MURDER & NON-NEGL. MANSLAUGHTER', count: 600 },
+      { kyCd: 104, offense: 'RAPE', count: 500 },
+      { kyCd: 109, offense: 'GRAND LARCENY', count: 1 },
+      { kyCd: 110, offense: 'GRAND LARCENY OF MOTOR VEHICLE', count: 1 },
+    ]
+    const segment = [
+      { kyCd: 109, offense: 'GRAND LARCENY', count: 100 },
+      { kyCd: 110, offense: 'GRAND LARCENY OF MOTOR VEHICLE', count: 50 },
+      { kyCd: 105, offense: 'ROBBERY', count: 10 },
+      { kyCd: 106, offense: 'FELONY ASSAULT', count: 8 },
+      { kyCd: 101, offense: 'MURDER & NON-NEGL. MANSLAUGHTER', count: 2 },
+      { kyCd: 104, offense: 'RAPE', count: 1 },
+    ]
+
+    expect(displaySegmentCategories(segment, route)).toEqual([
+      { kyCd: 106, offense: 'FELONY ASSAULT', count: 8 },
+      { kyCd: 101, offense: 'MURDER & NON-NEGL. MANSLAUGHTER', count: 2 },
+      { kyCd: 105, offense: 'ROBBERY', count: 10 },
+    ])
+  })
+
+  it('does not copy a route category into a section that has none', () => {
+    expect(
+      displaySegmentCategories(
+        [{ kyCd: 109, offense: 'GRAND LARCENY', count: 4 }],
+        [
+          { kyCd: 105, offense: 'ROBBERY', count: 9 },
+          { kyCd: 106, offense: 'FELONY ASSAULT', count: 3 },
+        ],
+      ),
+    ).toEqual([])
+  })
+
+  it('opens details for red and yellow sections only', () => {
+    expect(selectionForSegmentTap('lower', '4')).toBeNull()
+    expect(selectionForSegmentTap('moderate', '4')).toBe('4')
+    expect(selectionForSegmentTap('higher', '9')).toBe('9')
+    expect(selectionForSegmentTap('unavailable', '1')).toBeNull()
   })
 
   it('ignores a stale assessment', () => {

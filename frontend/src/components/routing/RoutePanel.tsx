@@ -34,18 +34,18 @@ export default function RoutePanel({ status, routes, selectedId, onRetry, onOpen
       )}
       {status === 'ready' && selected && (
         <>
-          <div className={`${box} flex flex-col justify-center px-2.5 py-2`}>
-            <p className="text-[0.84rem] leading-5 font-semibold text-[var(--wa-text)]" style={outfit}>
+          <div className={`${box} flex flex-col items-center justify-center px-3 py-3.5 text-center`}>
+            <p className="text-[1.05rem] leading-6 font-semibold text-[var(--wa-text)]" style={outfit}>
               {formatDuration(selected.durationSeconds)}
             </p>
-            <p className="text-[0.78rem] leading-4 text-[var(--wa-text-muted)]" style={inter}>
+            <p className="text-[0.95rem] leading-5 text-[var(--wa-text-muted)]" style={inter}>
               {formatDistance(selected.distanceMeters)}
             </p>
           </div>
           <button
             type="button"
             onClick={onOpenSummary}
-            className={`${box} px-3 py-2 text-left text-[0.92rem] leading-snug font-semibold text-[var(--wa-text)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none`}
+            className={`${box} flex items-center justify-center px-4 py-3.5 text-center text-[1.05rem] leading-snug font-semibold text-[var(--wa-text)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none`}
             style={outfit}
           >
             {ROUTE_SUMMARY_LABEL}

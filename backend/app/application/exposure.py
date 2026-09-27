@@ -108,10 +108,16 @@ def exposure_score(counts: dict[int, int], length_m: float) -> float:
     return weighted * (TARGET_SEGMENT_M / length_m)
 
 
-def top_categories(counts: dict[int, int]) -> list[tuple[int, int]]:
+def top_categories(
+    counts: dict[int, int],
+    *,
+    limit: int | None = TOP_CATEGORY_LIMIT,
+) -> list[tuple[int, int]]:
     """Rank by complaint count, then by ascending offense code."""
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return [(ky_cd, count) for ky_cd, count in ranked[:TOP_CATEGORY_LIMIT] if count > 0]
+    if limit is not None:
+        ranked = ranked[:limit]
+    return [(ky_cd, count) for ky_cd, count in ranked if count > 0]
 
 
 def route_categories(
@@ -169,7 +175,11 @@ def summarize_segments(
     pieces: list[RoutePiece],
     rows: list[dict[str, Any]],
 ) -> list[ExposureSegment]:
-    """Build assessed segments. Raises if a row cannot be counted completely."""
+    """Build assessed segments. Raises if a row cannot be counted completely.
+
+    Each segment keeps every positive category count. The color still uses all
+    seven included categories. Choosing which of those counts to show is separate.
+    """
     chosen = _one_category_per_complaint(pieces, rows)
     segments: list[ExposureSegment] = []
     for piece in pieces:
@@ -183,7 +193,7 @@ def summarize_segments(
                 ofns_desc=CATEGORY_NAMES[ky_cd],
                 count=count,
             )
-            for ky_cd, count in top_categories(counts)
+            for ky_cd, count in top_categories(counts, limit=None)
         ]
         segments.append(
             ExposureSegment(

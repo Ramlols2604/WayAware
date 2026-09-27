@@ -5,21 +5,24 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import PlaceSuggestions from './components/routing/PlaceSuggestions'
 import RoutePanel from './components/routing/RoutePanel'
 import TravelModeSelector from './components/routing/TravelModeSelector'
-import { ROUTE_HIT_LAYER_ID, fitRoute, segmentIdFromClick, setRouteSegments } from './map/routeLayer'
+import { ROUTE_HIT_LAYER_ID, fitRoute, segmentHitFromClick, setRouteSegments } from './map/routeLayer'
 import { formatAppliedWindow } from './map/historicalReports'
 import {
+  NO_ROUTE_SUMMARY_MATCH,
   ROUTE_SUMMARY_CONTEXT,
+  ZERO_SEGMENT_MESSAGE,
   ROUTE_SUMMARY_LABEL,
   SEGMENT_DISTANCE_LABEL,
   SEGMENT_EXPLANATION,
-  ZERO_SEGMENT_MESSAGE,
   applyExposureError,
   applyExposureResponse,
   beginExposureRequest,
   displayRouteCategories,
+  displaySegmentCategories,
   exposureForRoute,
   exposureLevelLabel,
   idleExposure,
+  selectionForSegmentTap,
 } from './map/routeExposure'
 import { useRoutePlaces } from './routing/usePlaceSearch'
 import { requestRouteExposure, requestRoutes } from './api/wayawareApi'
@@ -86,7 +89,8 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
   const visibleExposure = exposureForRoute(exposure, selectedRoute?.id ?? null)
-  const selectedSegment = visibleExposure.segments.find((segment) => segment.id === visibleExposure.selectedId) ?? null
+  const tappedSegment = visibleExposure.segments.find((segment) => segment.id === visibleExposure.selectedId) ?? null
+  const selectedSegment = tappedSegment && tappedSegment.level !== 'lower' ? tappedSegment : null
   const summaryVisible = summaryOpen && visibleExposure.routeId === selectedRoute?.id
   const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
 
@@ -197,9 +201,14 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
         if (loaded) {
           setRouteSegments(loaded, null)
           loaded.on('click', ROUTE_HIT_LAYER_ID, (event) => {
-            const segmentId = segmentIdFromClick(event)
-            if (!segmentId) return
+            const hit = segmentHitFromClick(event)
+            if (!hit) return
             ignoreMapClick.current = true
+            const segmentId = selectionForSegmentTap(hit.level, hit.segmentId)
+            if (!segmentId) {
+              setExposure((current) => (current.selectedId === null ? current : { ...current, selectedId: null }))
+              return
+            }
             setSummaryOpen(false)
             setExposure((current) =>
               current.status === 'ready' ? { ...current, selectedId: segmentId } : current,
@@ -380,7 +389,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
                   bottom:
                     routeStatus === 'idle'
                       ? 'max(1.5rem, env(safe-area-inset-bottom, 0px))'
-                      : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 4.75rem)',
+                      : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 6.125rem)',
                 }
           }
         >
@@ -391,6 +400,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           <SegmentSummary
             key={selectedSegment.id}
             segment={selectedSegment}
+            routeCategories={visibleExposure.routeCategories}
             windowLabel={formatAppliedWindow(visibleExposure.appliedWindow)}
             onClose={() => setExposure((current) => ({ ...current, selectedId: null }))}
           />
@@ -434,14 +444,17 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
 
 function SegmentSummary({
   segment,
+  routeCategories,
   windowLabel,
   onClose,
 }: {
   segment: ExposureSegment
+  routeCategories: ExposureSegment['categories']
   windowLabel: string
   onClose: () => void
 }) {
   const [shown, setShown] = useState(false)
+  const categories = displaySegmentCategories(segment.categories, routeCategories)
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setShown(true))
@@ -470,13 +483,13 @@ function SegmentSummary({
       <p className="mt-1 text-[0.92rem] font-semibold text-[var(--wa-text)]" style={outfit}>
         {exposureLevelLabel(segment.level)}
       </p>
-      {segment.totalCount === 0 ? (
+      {categories.length === 0 ? (
         <p className="mt-3 text-[0.9rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
-          {ZERO_SEGMENT_MESSAGE}
+          {NO_ROUTE_SUMMARY_MATCH}
         </p>
       ) : (
         <ul className="mt-3 flex flex-col gap-1.5">
-          {segment.categories.map((category) => (
+          {categories.map((category) => (
             <li key={category.kyCd} className="flex items-baseline justify-between gap-3 text-[0.9rem]" style={inter}>
               <span className="text-[var(--wa-text)]">{category.offense}</span>
               <span className="shrink-0 font-semibold text-[var(--wa-text)]">{category.count.toLocaleString('en-US')}</span>
