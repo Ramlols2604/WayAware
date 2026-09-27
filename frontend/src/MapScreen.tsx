@@ -5,9 +5,20 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import PlaceSuggestions from './components/routing/PlaceSuggestions'
 import RoutePanel from './components/routing/RoutePanel'
 import TravelModeSelector from './components/routing/TravelModeSelector'
-import { ROUTE_HIT_LAYER_ID, fitRoute, segmentHitFromClick, setRouteSegments } from './map/routeLayer'
+import {
+  ALTERNATIVE_HIT_LAYER_ID,
+  ROUTE_HIT_LAYER_ID,
+  alternativeIdFromClick,
+  fitRoute,
+  segmentHitFromClick,
+  setAlternativeRoutes,
+  setRouteSegments,
+} from './map/routeLayer'
 import { formatAppliedWindow } from './map/historicalReports'
 import {
+  COMPARISON_UNAVAILABLE_MESSAGE,
+  NO_ALTERNATIVE_MESSAGE,
+  NO_LOWER_EXPOSURE_MESSAGE,
   NO_ROUTE_SUMMARY_MATCH,
   ROUTE_SUMMARY_CONTEXT,
   ZERO_SEGMENT_MESSAGE,
@@ -17,31 +28,53 @@ import {
   applyExposureError,
   applyExposureResponse,
   beginExposureRequest,
+  comparisonIsCurrent,
   displayRouteCategories,
   displaySegmentCategories,
   exposureForRoute,
   exposureLevelLabel,
+  fastestRouteId,
   idleExposure,
+  lowerExposureRouteId,
+  rerouteId,
   selectionForSegmentTap,
 } from './map/routeExposure'
 import { useRoutePlaces } from './routing/usePlaceSearch'
-import { requestRouteExposure, requestRoutes } from './api/wayawareApi'
+import { requestRouteComparison, requestRouteExposure, requestRoutes } from './api/wayawareApi'
 import type { ExposureSegment, ExposureState, RouteAlternative, RouteSafety, TravelMode } from './types/api'
 
 const MANHATTAN = { lat: 40.7549, lng: -73.9857 }
 const outfit = { fontFamily: 'Outfit, sans-serif' }
 const inter = { fontFamily: 'Inter, sans-serif' }
 
-function chooseRoute(list: RouteAlternative[], preference: RouteSafety) {
-  if (!list.length) return null
-  if (preference === 'fastest') {
-    return [...list].sort((a, b) => (a.durationSeconds ?? Number.POSITIVE_INFINITY) - (b.durationSeconds ?? Number.POSITIVE_INFINITY))[0].id
-  }
-  return list.find((route) => route.safety === 'safest')?.id ?? list[0].id
-}
-
 function isInNyc(lat: number, lng: number) {
   return lat > 40.48 && lat < 40.93 && lng > -74.28 && lng < -73.68
+}
+
+function comparisonKey(routes: RouteAlternative[]) {
+  return routes.map((route) => JSON.stringify(route.geometry.coordinates)).join('|')
+}
+
+function chooseDisplayedRoute(
+  routes: RouteAlternative[],
+  routeKey: string,
+  routePreference: RouteSafety,
+  comparisonStatus: 'idle' | 'loading' | 'ready' | 'error',
+  comparisonWeights: number[] | null,
+  manualChoice: { key: string; id: string; preference: RouteSafety } | null,
+) {
+  if (!routes.length) return null
+  if (
+    manualChoice?.key === routeKey &&
+    manualChoice.preference === routePreference &&
+    routes.some((route) => route.id === manualChoice.id)
+  ) {
+    return manualChoice.id
+  }
+  if (routePreference === 'fastest' || comparisonStatus !== 'ready' || !comparisonWeights) {
+    return fastestRouteId(routes)
+  }
+  return lowerExposureRouteId(routes, comparisonWeights) ?? fastestRouteId(routes)
 }
 
 function userHtml() {
@@ -78,12 +111,13 @@ function framePadding(map: maplibregl.Map, search: HTMLElement | null, panel: HT
 }
 
 type MapScreenProps = {
+  active: boolean
   onOpenSettings: () => void
   onBack: () => void
   routePreference: RouteSafety
 }
 
-export default function MapScreen({ onOpenSettings, onBack, routePreference }: MapScreenProps) {
+export default function MapScreen({ active, onOpenSettings, onBack, routePreference }: MapScreenProps) {
   const places = useRoutePlaces()
   const [travelMode, setTravelMode] = useState<TravelMode>('walking')
   const [routes, setRoutes] = useState<RouteAlternative[]>([])
@@ -92,6 +126,10 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const [routeAttempt, setRouteAttempt] = useState(0)
   const [exposureAttempt, setExposureAttempt] = useState(0)
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [manualChoice, setManualChoice] = useState<{ key: string; id: string; preference: RouteSafety } | null>(null)
+  const [comparisonWeights, setComparisonWeights] = useState<number[] | null>(null)
+  const [comparisonStatus, setComparisonStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [buttonNotice, setButtonNotice] = useState<{ key: string; text: string } | null>(null)
   const [exposure, setExposure] = useState<ExposureState>(idleExposure)
   const [user, setUser] = useState(MANHATTAN)
   const [mapReady, setMapReady] = useState(false)
@@ -102,6 +140,10 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const routeQueryRef = useRef('')
   const ignoreMapClick = useRef(false)
   const exposureRequestId = useRef(0)
+  const comparisonRequestId = useRef(0)
+  const loadedComparisonKey = useRef<string | null>(null)
+  const preferenceRef = useRef(routePreference)
+  preferenceRef.current = routePreference
 
   useEffect(() => {
     if (!navigator.geolocation) return
@@ -167,22 +209,90 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     }
   }, [places.origin.place, places.destination.place, routeQueryKey, travelMode, routeAttempt])
 
+  const routeKey = comparisonKey(routes)
+
   useEffect(() => {
-    if (!routes.length) return
-    setSelectedRouteId(chooseRoute(routes, routePreference))
-  }, [routePreference, routes])
+    if (!active) return
+    mapRef.current?.resize()
+  }, [active, mapReady])
+
+  const chosenRouteId = chooseDisplayedRoute(
+    routes,
+    routeKey,
+    routePreference,
+    comparisonStatus,
+    comparisonWeights,
+    manualChoice,
+  )
+  if (chosenRouteId !== selectedRouteId) setSelectedRouteId(chosenRouteId)
+
+  const noticeKey = `${routePreference}:${routeKey}`
+  const routeNotice =
+    comparisonStatus === 'error'
+      ? COMPARISON_UNAVAILABLE_MESSAGE
+      : buttonNotice?.key === noticeKey
+        ? buttonNotice.text
+        : routes.length === 1
+          ? NO_ALTERNATIVE_MESSAGE
+          : null
+
+  useEffect(() => {
+    if (routes.length < 2) {
+      loadedComparisonKey.current = null
+      comparisonRequestId.current += 1
+      setComparisonWeights(null)
+      setComparisonStatus('idle')
+      return
+    }
+    if (loadedComparisonKey.current === routeKey) return
+    loadedComparisonKey.current = null
+    const requestId = comparisonRequestId.current + 1
+    comparisonRequestId.current = requestId
+    const requestedPreference = routePreference
+    const controller = new AbortController()
+    setComparisonWeights(null)
+    setComparisonStatus('loading')
+    requestRouteComparison(
+      routes.map((route) => route.geometry),
+      controller.signal,
+    )
+      .then((weights) => {
+        if (
+          !comparisonIsCurrent(
+            requestId,
+            comparisonRequestId.current,
+            requestedPreference,
+            preferenceRef.current,
+          )
+        ) {
+          return
+        }
+        loadedComparisonKey.current = routeKey
+        setComparisonWeights(weights)
+        setComparisonStatus('ready')
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
+        if (requestId !== comparisonRequestId.current) return
+        setComparisonWeights(null)
+        setComparisonStatus('error')
+      })
+    return () => controller.abort()
+  }, [routeKey, routePreference, routes])
 
   useEffect(() => {
     setSummaryOpen(false)
   }, [selectedRoute?.id])
 
+  const comparisonSettled = routes.length < 2 || comparisonStatus === 'ready' || comparisonStatus === 'error'
+
   useEffect(() => {
     const route = selectedRoute
     const geometry = route?.geometry
-    if (!route || !geometry) {
+    if (!route || !geometry || !comparisonSettled) {
       const requestId = exposureRequestId.current + 1
       exposureRequestId.current = requestId
-      setExposure({ ...idleExposure, requestId })
+      setExposure(route ? beginExposureRequest(requestId, route.id) : { ...idleExposure, requestId })
       return
     }
     const requestId = exposureRequestId.current + 1
@@ -200,7 +310,39 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     return () => {
       controller.abort()
     }
-  }, [selectedRoute, exposureAttempt])
+  }, [comparisonSettled, exposureAttempt, selectedRoute])
+
+  const selectDrawnRoute = useRef<(routeId: string) => void>(() => {})
+  selectDrawnRoute.current = (routeId: string) => {
+    if (!routes.some((route) => route.id === routeId) || routeId === selectedRouteId) return
+    setButtonNotice(null)
+    setSummaryOpen(false)
+    setExposure((current) => (current.selectedId === null ? current : { ...current, selectedId: null }))
+    setManualChoice({ key: routeKey, id: routeId, preference: routePreference })
+    setSelectedRouteId(routeId)
+  }
+
+  function findLowerExposureRoute() {
+    if (comparisonStatus === 'loading') return
+    if (!selectedRoute || routes.length < 2) {
+      setButtonNotice({ key: noticeKey, text: NO_ALTERNATIVE_MESSAGE })
+      return
+    }
+    if (comparisonStatus !== 'ready' || !comparisonWeights) {
+      setButtonNotice({ key: noticeKey, text: COMPARISON_UNAVAILABLE_MESSAGE })
+      return
+    }
+    const next = rerouteId(routes, comparisonWeights, selectedRoute.id)
+    if (!next) {
+      setButtonNotice({ key: noticeKey, text: NO_LOWER_EXPOSURE_MESSAGE })
+      return
+    }
+    setButtonNotice(null)
+    setSummaryOpen(false)
+    setExposure((current) => (current.selectedId === null ? current : { ...current, selectedId: null }))
+    setManualChoice({ key: routeKey, id: next, preference: routePreference })
+    setSelectedRouteId(next)
+  }
 
   function recenter() {
     const map = mapRef.current
@@ -242,6 +384,20 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
         const loaded = map
         if (loaded) {
           setRouteSegments(loaded, null)
+          setAlternativeRoutes(loaded, [])
+          loaded.on('click', ALTERNATIVE_HIT_LAYER_ID, (event) => {
+            if (loaded.queryRenderedFeatures(event.point, { layers: [ROUTE_HIT_LAYER_ID] }).length) return
+            const routeId = alternativeIdFromClick(event)
+            if (!routeId) return
+            ignoreMapClick.current = true
+            selectDrawnRoute.current(routeId)
+          })
+          loaded.on('mouseenter', ALTERNATIVE_HIT_LAYER_ID, () => {
+            loaded.getCanvas().style.cursor = 'pointer'
+          })
+          loaded.on('mouseleave', ALTERNATIVE_HIT_LAYER_ID, () => {
+            loaded.getCanvas().style.cursor = ''
+          })
           loaded.on('click', ROUTE_HIT_LAYER_ID, (event) => {
             const hit = segmentHitFromClick(event)
             if (!hit) return
@@ -307,8 +463,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !mapReady) return
-    if (!selectedRoute || routeQueryRef.current !== routeQueryKey) return
+    if (!map || !mapReady || !selectedRoute || routeQueryRef.current !== routeQueryKey) return
     const geometry = selectedRoute.geometry
     const origin = places.origin.place
     const destination = places.destination.place
@@ -318,10 +473,13 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     const frame = requestAnimationFrame(() => {
       const current = mapRef.current
       if (!current || routeQueryRef.current !== routeQueryKey) return
-      fitRoute(current, geometry, endpoints, framePadding(current, searchRef.current, panelRef.current))
+      const others = routes.flatMap((route) =>
+        route.id === selectedRoute.id ? [] : route.geometry.coordinates,
+      )
+      fitRoute(current, geometry, endpoints, framePadding(current, searchRef.current, panelRef.current), others)
     })
     return () => cancelAnimationFrame(frame)
-  }, [mapReady, places.destination.place, places.origin.place, routeQueryKey, selectedRoute])
+  }, [mapReady, places.destination.place, places.origin.place, routeQueryKey, routes, selectedRoute])
 
   useEffect(() => {
     const map = mapRef.current
@@ -351,6 +509,12 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady) return
+    setAlternativeRoutes(
+      map,
+      routes
+        .filter((route) => route.id !== selectedRoute?.id)
+        .map((route) => ({ routeId: route.id, coordinates: route.geometry.coordinates })),
+    )
     const geometry = selectedRoute?.geometry
     if (!geometry || visibleExposure.status !== 'ready') {
       setRouteSegments(
@@ -369,7 +533,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
         coordinates: segment.coordinates,
       })),
     )
-  }, [mapReady, selectedRoute, visibleExposure])
+  }, [mapReady, routes, selectedRoute, visibleExposure])
 
   return (
     <div className="absolute inset-0 bg-[#f8f8f8]">
@@ -453,6 +617,43 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
             <GearIcon />
           </button>
         </div>
+
+        {selectedRoute && routeNotice && (
+          <p
+            role="status"
+            className="pointer-events-auto absolute right-20 left-3 z-20 rounded-2xl border border-[var(--wa-line)] bg-[var(--wa-card)] px-3 py-2 text-[0.82rem] leading-snug text-[var(--wa-text)] shadow-[var(--wa-float-shadow)]"
+            style={{
+              ...inter,
+              bottom: summaryVisible || selectedSegment
+                ? 'calc(21.5rem + 3.25rem)'
+                : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 12.875rem)',
+            }}
+          >
+            {routeNotice}
+          </p>
+        )}
+
+        {selectedRoute && (
+          <button
+            type="button"
+            onClick={findLowerExposureRoute}
+            disabled={comparisonStatus === 'loading'}
+            aria-busy={comparisonStatus === 'loading'}
+            aria-label="Find a lower-exposure route"
+            className={`pointer-events-auto absolute right-3 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none disabled:opacity-60 ${
+              summaryVisible || selectedSegment ? 'bottom-[21.5rem]' : ''
+            }`}
+            style={
+              summaryVisible || selectedSegment
+                ? undefined
+                : {
+                    bottom: 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 9.625rem)',
+                  }
+            }
+          >
+            <RerouteIcon />
+          </button>
+        )}
 
         <button
           type="button"
@@ -762,6 +963,14 @@ function GearIcon() {
         strokeLinejoin="round"
       />
       <circle cx="12" cy="12" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+function RerouteIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7 16.5 16.5 7M16.5 7H13M16.5 7v3.5M17 7.5 7.5 17M7.5 17H11M7.5 17v-3.5" stroke="#3b82f6" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

@@ -59,8 +59,9 @@ ALONG_ROUTE_BBOX_SQL = (
 # longitude index. ST_DWithin on geography is the membership test; the box is
 # only a superset prefilter. Rows are not limited to the newest 100.
 EXPOSURE_SEGMENT_SQL = """
-SELECT s.id, c.source, c.source_id, c.ky_cd
+SELECT s.route_index, s.id, c.source, c.source_id, c.ky_cd
 FROM jsonb_to_recordset(%(segments)s::jsonb) AS s(
+    route_index int,
     id int,
     min_lat float8,
     max_lat float8,

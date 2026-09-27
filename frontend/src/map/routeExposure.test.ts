@@ -4,9 +4,18 @@ import {
   applyExposureError,
   applyExposureResponse,
   beginExposureRequest,
+  COMPARISON_UNAVAILABLE_MESSAGE,
+  NO_ALTERNATIVE_MESSAGE,
+  NO_LOWER_EXPOSURE_MESSAGE,
+  comparisonIsCurrent,
+  detourAllowanceSeconds,
   displayRouteCategories,
   displaySegmentCategories,
   exposureForRoute,
+  fastestRouteId,
+  lowerExposureRouteId,
+  readStoredRoutePreference,
+  rerouteId,
   selectionForSegmentTap,
 } from './routeExposure'
 
@@ -103,6 +112,56 @@ describe('route exposure state', () => {
         ],
       ),
     ).toEqual([])
+  })
+
+  it('stores only a valid route preference', () => {
+    expect(readStoredRoutePreference(null)).toBe('safest')
+    expect(readStoredRoutePreference('fastest')).toBe('fastest')
+    expect(readStoredRoutePreference('safest')).toBe('safest')
+    expect(readStoredRoutePreference('shortest')).toBe('safest')
+  })
+
+  it('selects the fastest route and limits a detour', () => {
+    const routes = [
+      { id: 'slow', durationSeconds: 1800 },
+      { id: 'fast', durationSeconds: 600 },
+      { id: 'mid', durationSeconds: 900 },
+    ]
+    expect(fastestRouteId(routes)).toBe('fast')
+    expect(detourAllowanceSeconds(600)).toBe(300)
+    expect(detourAllowanceSeconds(1800)).toBe(600)
+    expect(lowerExposureRouteId(routes, [1, 50, 5])).toBe('mid')
+    expect(lowerExposureRouteId(routes, [1, 50, 80])).toBe('fast')
+  })
+
+  it('breaks an equal exposure tie toward the faster route', () => {
+    const routes = [
+      { id: 'slow', durationSeconds: 700 },
+      { id: 'fast', durationSeconds: 600 },
+    ]
+    expect(lowerExposureRouteId(routes, [10, 10])).toBe('fast')
+  })
+
+  it('reroutes only to a different strictly lower eligible route', () => {
+    const routes = [
+      { id: 'current', durationSeconds: 600 },
+      { id: 'quieter', durationSeconds: 800 },
+      { id: 'too-long', durationSeconds: 1300 },
+      { id: 'same', durationSeconds: 650 },
+    ]
+    expect(rerouteId(routes, [20, 5, 1, 20], 'current')).toBe('quieter')
+    expect(rerouteId(routes, [5, 20, 1, 20], 'current')).toBeNull()
+    expect(rerouteId(routes, [20, 20, 1, 20], 'current')).toBeNull()
+    expect(rerouteId(routes, [null, 1, 1, 1], 'current')).toBeNull()
+    expect(NO_LOWER_EXPOSURE_MESSAGE).toContain('travel-time limit')
+    expect(NO_ALTERNATIVE_MESSAGE).toContain('No alternative')
+    expect(COMPARISON_UNAVAILABLE_MESSAGE).toContain('unavailable')
+  })
+
+  it('ignores a stale comparison result', () => {
+    expect(comparisonIsCurrent(2, 2, 'safest', 'safest')).toBe(true)
+    expect(comparisonIsCurrent(1, 2, 'safest', 'safest')).toBe(false)
+    expect(comparisonIsCurrent(2, 2, 'fastest', 'safest')).toBe(false)
   })
 
   it('opens details for red and yellow sections only', () => {

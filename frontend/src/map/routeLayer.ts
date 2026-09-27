@@ -3,7 +3,10 @@ import type { ExposureLevel, LineStringGeometry } from '../types/api'
 
 const SOURCE_ID = 'wayaware-route'
 const LAYER_ID = 'wayaware-route-line'
+const ALTERNATIVE_SOURCE_ID = 'wayaware-route-alternatives'
+const ALTERNATIVE_LAYER_ID = 'wayaware-route-alternatives-line'
 export const ROUTE_HIT_LAYER_ID = 'wayaware-route-hit'
+export const ALTERNATIVE_HIT_LAYER_ID = 'wayaware-route-alternatives-hit'
 
 const emptyRoute = { type: 'FeatureCollection' as const, features: [] }
 
@@ -18,6 +21,11 @@ export type DrawnRouteSegment = {
   /** Empty when the line is only a gray placeholder. */
   segmentId: string
   level: ExposureLevel | 'unavailable'
+  coordinates: [number, number][]
+}
+
+export type DrawnAlternative = {
+  routeId: string
   coordinates: [number, number][]
 }
 
@@ -77,6 +85,54 @@ export function setRouteSegments(map: MapLibreMap, segments: DrawnRouteSegment[]
   })
 }
 
+export function alternativeCollection(routes: DrawnAlternative[]) {
+  return {
+    type: 'FeatureCollection' as const,
+    features: routes.map((route) => ({
+      type: 'Feature' as const,
+      properties: { routeId: route.routeId },
+      geometry: { type: 'LineString' as const, coordinates: route.coordinates },
+    })),
+  }
+}
+
+/** Draws unselected candidates under the colored route. Exposure colors stay on the selection. */
+export function setAlternativeRoutes(map: MapLibreMap, routes: DrawnAlternative[] | null) {
+  const data = routes?.length ? alternativeCollection(routes) : emptyRoute
+  const source = map.getSource(ALTERNATIVE_SOURCE_ID) as GeoJSONSource | undefined
+  if (source) {
+    source.setData(data)
+    return
+  }
+  map.addSource(ALTERNATIVE_SOURCE_ID, { type: 'geojson', data })
+  const before = map.getLayer(LAYER_ID) ? LAYER_ID : undefined
+  map.addLayer(
+    {
+      id: ALTERNATIVE_LAYER_ID,
+      type: 'line',
+      source: ALTERNATIVE_SOURCE_ID,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#64748B', 'line-width': 4, 'line-opacity': 0.7 },
+    },
+    before,
+  )
+  map.addLayer(
+    {
+      id: ALTERNATIVE_HIT_LAYER_ID,
+      type: 'line',
+      source: ALTERNATIVE_SOURCE_ID,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#000000', 'line-width': 22, 'line-opacity': 0.01 },
+    },
+    before,
+  )
+}
+
+export function alternativeIdFromClick(event: MapLayerMouseEvent) {
+  const routeId = event.features?.[0]?.properties?.routeId
+  return typeof routeId === 'string' && routeId ? routeId : null
+}
+
 export function segmentHitFromClick(event: MapLayerMouseEvent) {
   const properties = event.features?.[0]?.properties
   const segmentId = properties?.segmentId
@@ -105,8 +161,9 @@ export function fitRoute(
   geometry: LineStringGeometry,
   endpoints: [number, number][],
   padding: { top: number; bottom: number; left: number; right: number },
+  also: [number, number][] = [],
 ) {
-  const bounds = boundsForPoints([...geometry.coordinates, ...endpoints])
+  const bounds = boundsForPoints([...geometry.coordinates, ...endpoints, ...also])
   if (!bounds) return
   map.fitBounds(
     [

@@ -158,6 +158,25 @@ class RouteIncident(BaseModel):
     longitude: float
 
 
+class RouteComparisonRequest(BaseModel):
+    routes: list[LineStringRoute] = Field(min_length=2, max_length=3)
+    radius_m: float = Field(default=50, gt=0, le=MAX_RADIUS_M)
+    start: datetime
+    end: datetime
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> RouteComparisonRequest:
+        _aware(self.start, "start")
+        _aware(self.end, "end")
+        if self.start >= self.end:
+            raise ValueError("start must be before end")
+        return self
+
+
+class RouteComparisonResponse(BaseModel):
+    weights: list[int]
+
+
 class RouteExposureRequest(BaseModel):
     route: LineStringRoute
     radius_m: float = Field(default=50, gt=0, le=MAX_RADIUS_M)

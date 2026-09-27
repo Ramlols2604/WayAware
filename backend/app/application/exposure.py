@@ -55,6 +55,8 @@ from app.schemas.crime import (
     ExposureCategoryCount,
     ExposureLevel,
     ExposureSegment,
+    RouteComparisonRequest,
+    RouteComparisonResponse,
     RouteExposureRequest,
     RouteExposureResponse,
 )
@@ -64,6 +66,8 @@ LOWER_BELOW = 80.0
 HIGHER_AT = 400.0
 TOP_CATEGORY_LIMIT = 3
 ROUTE_CATEGORY_LIMIT = 5
+COMPARISON_BUDGET_SECONDS = 20.0
+MAX_COMPARISON_ROUTES = 3
 # Extra ground distance around each piece so the latitude/longitude prefilter
 # contains the 50 m geography corridor. ST_DWithin is still the exact test.
 # Twenty-five meters matched the wider proved corridor box on real walking
@@ -118,6 +122,74 @@ def top_categories(
     if limit is not None:
         ranked = ranked[:limit]
     return [(ky_cd, count) for ky_cd, count in ranked if count > 0]
+
+
+def comparison_weight(
+    pieces: list[RoutePiece],
+    rows: list[dict[str, Any]],
+) -> int:
+    """Weight each complaint once. Extra route length does not reduce it."""
+    unique: dict[tuple[str, str], int] = {}
+    for choices in _one_category_per_complaint(pieces, rows):
+        for key, ky_cd in choices.items():
+            current = unique.get(key)
+            if current is None or ky_cd < current:
+                unique[key] = ky_cd
+    return sum(CATEGORY_WEIGHTS[ky_cd] for ky_cd in unique.values())
+
+
+def compare_routes(
+    request: RouteComparisonRequest,
+    *,
+    database_url: str | None,
+    earliest: datetime,
+    max_window_days: int,
+) -> RouteComparisonResponse:
+    """Score every candidate in one read-only snapshot.
+
+    A timeout or database error raises. Callers must not treat that as zero.
+    """
+    require_historical_window(request.start, request.end, earliest, max_window_days)
+    if database_url is None or not database_url.strip():
+        raise CrimeConfigurationError("Historical incidents are not configured")
+    if len(request.routes) > MAX_COMPARISON_ROUTES:
+        raise CrimeDatabaseError("Historical incident query failed")
+
+    grouped: list[list[RoutePiece]] = []
+    payload: list[dict[str, Any]] = []
+    try:
+        for route_index, route in enumerate(request.routes):
+            pieces = split_route(route.coordinates)
+            grouped.append(pieces)
+            for piece in pieces:
+                payload.append(_segment_query(piece, request.radius_m, route_index))
+    except ValueError as exc:
+        raise CrimeDatabaseError("Historical incident query failed") from exc
+
+    rows = fetch_route_exposure(
+        database_url,
+        segments=payload,
+        radius_m=request.radius_m,
+        start=request.start,
+        end=request.end,
+        codes=list(CATEGORY_WEIGHTS),
+        budget_seconds=COMPARISON_BUDGET_SECONDS,
+    )
+    grouped_rows: list[list[dict[str, Any]]] = [[] for _ in grouped]
+    for row in rows:
+        try:
+            route_index = int(row["route_index"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CrimeDatabaseError("Historical incident query failed") from exc
+        if route_index < 0 or route_index >= len(grouped):
+            raise CrimeDatabaseError("Historical incident query failed")
+        grouped_rows[route_index].append(row)
+    return RouteComparisonResponse(
+        weights=[
+            comparison_weight(pieces, route_rows)
+            for pieces, route_rows in zip(grouped, grouped_rows, strict=True)
+        ]
+    )
 
 
 def route_categories(
@@ -273,7 +345,11 @@ def _one_category_per_complaint(
     return chosen
 
 
-def _segment_query(piece: RoutePiece, radius_m: float) -> dict[str, Any]:
+def _segment_query(
+    piece: RoutePiece,
+    radius_m: float,
+    route_index: int = 0,
+) -> dict[str, Any]:
     latitudes = [point[1] for point in piece.coordinates]
     longitudes = [point[0] for point in piece.coordinates]
     guard_m = radius_m + PREFILTER_MARGIN_M
@@ -288,6 +364,7 @@ def _segment_query(piece: RoutePiece, radius_m: float) -> dict[str, Any]:
     if min_lon < -180.0 or max_lon > 180.0:
         raise ValueError("segment bounds")
     return {
+        "route_index": route_index,
         "id": piece.index,
         "min_lat": min(latitudes) - lat_pad,
         "max_lat": max(latitudes) + lat_pad,

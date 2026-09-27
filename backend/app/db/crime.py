@@ -102,22 +102,24 @@ def fetch_route_exposure(
     start: datetime,
     end: datetime,
     codes: list[int],
+    budget_seconds: float = DATABASE_BUDGET_SECONDS,
 ) -> list[dict[str, Any]]:
     """Return every segment match, or raise without a partial list.
 
     The segments are the full route cut without gaps. Membership is the
     per-segment geography test in one statement. Connecting and executing
-    share the 15 second budget.
+    share the caller's budget. One route keeps the 15 second budget.
     """
-    if not segments:
+    if not segments or budget_seconds <= 0:
         raise CrimeDatabaseError("Historical incident query failed")
-    deadline = monotonic() + DATABASE_BUDGET_SECONDS
+    deadline = monotonic() + budget_seconds
+    timeout_seconds = max(1, math.ceil(budget_seconds))
     try:
         connection = psycopg.connect(
             database_url,
             connect_timeout=CONNECT_TIMEOUT_SECONDS,
             sslmode="require",
-            options=f"-c statement_timeout={STATEMENT_TIMEOUT}",
+            options=f"-c statement_timeout={timeout_seconds}s",
             row_factory=dict_row,
         )
     except psycopg.Error as exc:
@@ -130,7 +132,7 @@ def fetch_route_exposure(
         if remaining <= 0:
             raise CrimeDatabaseError("Historical incident query failed")
         with connection.cursor() as cursor:
-            cursor.execute(_statement_timeout_sql(remaining))
+            cursor.execute(_statement_timeout_sql(remaining, budget_seconds))
             cursor.execute(
                 EXPOSURE_SEGMENT_SQL,
                 {
@@ -148,9 +150,12 @@ def fetch_route_exposure(
         connection.close()
 
 
-def _statement_timeout_sql(remaining_seconds: float) -> str:
+def _statement_timeout_sql(
+    remaining_seconds: float,
+    cap_seconds: float = DATABASE_BUDGET_SECONDS,
+) -> str:
     milliseconds = math.ceil(remaining_seconds * 1000)
-    milliseconds = min(int(DATABASE_BUDGET_SECONDS * 1000), max(1, milliseconds))
+    milliseconds = min(int(cap_seconds * 1000), max(1, milliseconds))
     # The value is this process's remaining budget, not request text.
     return "SET statement_timeout = '" + str(milliseconds) + "ms'"
 

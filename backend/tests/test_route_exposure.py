@@ -7,8 +7,11 @@ from fastapi.testclient import TestClient
 
 from app.application.exposure import (
     CATEGORY_WEIGHTS,
+    COMPARISON_BUDGET_SECONDS,
     HIGHER_AT,
     LOWER_BELOW,
+    compare_routes,
+    comparison_weight,
     exposure_level,
     exposure_score,
     route_categories,
@@ -16,6 +19,7 @@ from app.application.exposure import (
     summarize_segments,
     top_categories,
 )
+from app.db.crime import DATABASE_BUDGET_SECONDS, _statement_timeout_sql
 from app.db.route_bounds import geodesic_meters
 from app.db.spatial_queries import EXPOSURE_SEGMENT_SQL
 from app.main import app
@@ -244,6 +248,116 @@ def test_assessed_route_hides_the_numeric_score(client, monkeypatch):
         (105, 1),
         (109, 1),
     ]
+
+
+def test_comparison_weight_counts_each_complaint_once():
+    pieces = split_route([[-73.98, 40.75], offset_north(-73.98, 40.75, 200)])
+    assert len(pieces) == 2
+    rows = [
+        {"id": 0, "source": "nypd_complaint", "source_id": "shared", "ky_cd": 109},
+        {"id": 1, "source": "nypd_complaint", "source_id": "shared", "ky_cd": 105},
+        {"id": 0, "source": "nypd_complaint", "source_id": "once", "ky_cd": 101},
+    ]
+    assert comparison_weight(pieces, rows) == 33
+
+
+def test_comparison_budget_stays_separate_from_the_color_budget():
+    assert DATABASE_BUDGET_SECONDS == 15
+    assert COMPARISON_BUDGET_SECONDS == 20
+    assert _statement_timeout_sql(20) == "SET statement_timeout = '15000ms'"
+    assert _statement_timeout_sql(20, 20) == "SET statement_timeout = '20000ms'"
+
+
+def test_compare_routes_uses_one_snapshot_query(monkeypatch):
+    captured = {}
+
+    def fake_fetch(database_url, **kwargs):
+        captured["budget"] = kwargs["budget_seconds"]
+        captured["calls"] = captured.get("calls", 0) + 1
+        return [
+            _comparison_row(0, "a", 109),
+            _comparison_row(1, "b", 101),
+            _comparison_row(1, "b", 101),
+        ]
+
+    monkeypatch.setattr("app.application.exposure.fetch_route_exposure", fake_fetch)
+    result = compare_routes(
+        _comparison_request(),
+        database_url="postgresql://example",
+        earliest=EARLIEST,
+        max_window_days=7320,
+    )
+    assert captured == {"budget": 20, "calls": 1}
+    assert result.weights == [1, 25]
+
+
+def test_comparison_endpoint_returns_every_weight(client, monkeypatch):
+    configure_database()
+    installed = install_database(
+        monkeypatch,
+        rows=[
+            _comparison_row(0, "a", 109),
+            _comparison_row(1, "b", 101),
+        ],
+    )
+    response = client.post("/crime/route-comparison", json=_comparison_body())
+    assert response.status_code == 200
+    assert response.json()["weights"] == [1, 25]
+    assert installed["calls"][0][1]["options"] == "-c statement_timeout=20s"
+    assert installed["connection"].read_only is True
+
+
+def test_comparison_timeout_does_not_return_partial_weights(client, monkeypatch):
+    configure_database()
+    install_database(monkeypatch, error=psycopg.errors.QueryCanceled("timeout"))
+    response = client.post("/crime/route-comparison", json=_comparison_body())
+    assert response.status_code == 502
+    assert "weights" not in response.json()
+
+
+def test_color_request_keeps_the_fifteen_second_budget(client, monkeypatch):
+    configure_database()
+    installed = install_database(monkeypatch, rows=[])
+    response = client.post(
+        "/crime/route-exposure",
+        json={
+            "route": {
+                "type": "LineString",
+                "coordinates": [[-73.98, 40.75], offset_north(-73.98, 40.75, 80)],
+            },
+            "radius_m": 50,
+            **WINDOW,
+        },
+    )
+    assert response.status_code == 200
+    assert installed["calls"][0][1]["options"] == "-c statement_timeout=15s"
+
+
+def _comparison_row(route_index: int, source_id: str, ky_cd: int) -> dict:
+    return {
+        "route_index": route_index,
+        "id": 0,
+        "source": "nypd_complaint",
+        "source_id": source_id,
+        "ky_cd": ky_cd,
+    }
+
+
+def _comparison_request():
+    from app.schemas.crime import RouteComparisonRequest
+
+    return RouteComparisonRequest.model_validate(_comparison_body())
+
+
+def _comparison_body():
+    return {
+        "routes": [
+            {"type": "LineString", "coordinates": [[-73.98, 40.75], [-73.98, 40.751]]},
+            {"type": "LineString", "coordinates": [[-73.97, 40.75], [-73.97, 40.751]]},
+        ],
+        "radius_m": 50,
+        **WINDOW,
+    }
 
 
 def test_database_failure_does_not_return_colors(client, monkeypatch):

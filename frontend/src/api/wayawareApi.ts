@@ -146,6 +146,31 @@ export async function requestRouteExposure(
   return parseRouteExposure(data)
 }
 
+export async function requestRouteComparison(
+  geometries: LineStringGeometry[],
+  signal?: AbortSignal,
+): Promise<number[]> {
+  const data = await requestJson('/crime/route-comparison', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      routes: geometries,
+      radius_m: HISTORICAL_REPORT_RADIUS_M,
+      start: HISTORICAL_REPORT_WINDOW.start,
+      end: HISTORICAL_REPORT_WINDOW.end,
+    }),
+  })
+  if (!isRecord(data) || !Array.isArray(data.weights) || data.weights.length !== geometries.length) {
+    throw new WayAwareApiError('Route comparison did not include a weight for every route.')
+  }
+  return data.weights.map((value) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new WayAwareApiError('Route comparison did not include a weight for every route.')
+    }
+    return value
+  })
+}
+
 export async function requestRoutes(endpoints: RouteEndpoints): Promise<RouteAlternative[]> {
   const spec = await loadSpec()
   const body = buildRouteBody(spec, endpoints)

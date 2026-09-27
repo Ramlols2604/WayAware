@@ -7,12 +7,14 @@ from app.application.crime import (
     InvalidCrimeQuery,
     incidents_along_route,
 )
-from app.application.exposure import assess_route
+from app.application.exposure import assess_route, compare_routes
 from app.config import Settings, get_settings
 from app.db.crime import CrimeDatabaseError
 from app.schemas.crime import (
     AlongRouteRequest,
     AlongRouteResponse,
+    RouteComparisonRequest,
+    RouteComparisonResponse,
     RouteExposureRequest,
     RouteExposureResponse,
 )
@@ -47,6 +49,35 @@ def along_route(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except CrimeDatabaseError as exc:
         logger.warning("Historical incident query failed")
+        raise HTTPException(
+            status_code=502, detail="Historical incident query failed"
+        ) from exc
+
+
+@router.post("/route-comparison", response_model=RouteComparisonResponse)
+def route_comparison(
+    request: RouteComparisonRequest,
+    settings: Settings = Depends(get_settings),
+) -> RouteComparisonResponse:
+    """Score every returned candidate in one read-only snapshot.
+
+    A database failure does not return partial weights.
+    """
+    try:
+        return compare_routes(
+            request,
+            database_url=settings.database_url,
+            earliest=settings.crime_earliest_occurred_at,
+            max_window_days=settings.crime_max_window_days,
+        )
+    except CrimeConfigurationError as exc:
+        raise HTTPException(
+            status_code=503, detail="Historical incidents are not configured"
+        ) from exc
+    except InvalidCrimeQuery as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CrimeDatabaseError as exc:
+        logger.warning("Historical comparison query failed")
         raise HTTPException(
             status_code=502, detail="Historical incident query failed"
         ) from exc

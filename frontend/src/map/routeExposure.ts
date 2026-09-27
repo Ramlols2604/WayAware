@@ -18,6 +18,89 @@ export const ROUTE_SUMMARY_CONTEXT = 'Most reported historically within 50 m of 
 export const NO_ROUTE_SUMMARY_MATCH =
   'No matching categories from the route summary in this section.'
 
+export const NO_ALTERNATIVE_MESSAGE = 'No alternative route was returned.'
+
+export const NO_LOWER_EXPOSURE_MESSAGE =
+  'No lower-exposure alternative found within the travel-time limit.'
+
+export const COMPARISON_UNAVAILABLE_MESSAGE = 'Route comparison is unavailable.'
+
+const DETOUR_FRACTION = 0.5
+const DETOUR_CAP_SECONDS = 10 * 60
+
+export type ChoiceRoute = {
+  id: string
+  durationSeconds: number | null
+}
+
+export const ROUTE_PREFERENCE_STORAGE_KEY = 'wayaware.routePreference'
+
+export function readStoredRoutePreference(stored: string | null): 'safest' | 'fastest' {
+  if (stored === 'safest' || stored === 'fastest') return stored
+  return 'safest'
+}
+
+export function writeStoredRoutePreference(storage: Pick<Storage, 'setItem'>, value: 'safest' | 'fastest') {
+  storage.setItem(ROUTE_PREFERENCE_STORAGE_KEY, value)
+}
+
+export function detourAllowanceSeconds(fastestSeconds: number) {
+  return Math.min(fastestSeconds * DETOUR_FRACTION, DETOUR_CAP_SECONDS)
+}
+
+function routeDuration(route: ChoiceRoute) {
+  return route.durationSeconds ?? Number.POSITIVE_INFINITY
+}
+
+export function fastestRouteId(routes: ChoiceRoute[]) {
+  if (!routes.length) return null
+  return [...routes].sort((left, right) => routeDuration(left) - routeDuration(right) || left.id.localeCompare(right.id))[0].id
+}
+
+function eligibleWeights(
+  routes: ChoiceRoute[],
+  weights: Array<number | null>,
+) {
+  const fastest = Math.min(...routes.map(routeDuration))
+  const allowance = detourAllowanceSeconds(fastest)
+  return routes.flatMap((route, index) => {
+    const weight = weights[index]
+    if (weight === null || !Number.isFinite(weight)) return []
+    if (routeDuration(route) > fastest + allowance) return []
+    return [{ route, weight }]
+  })
+}
+
+export function lowerExposureRouteId(routes: ChoiceRoute[], weights: Array<number | null> | null) {
+  if (!routes.length || !weights || weights.length !== routes.length) return fastestRouteId(routes)
+  const eligible = eligibleWeights(routes, weights)
+  if (!eligible.length) return null
+  eligible.sort((left, right) => left.weight - right.weight || routeDuration(left.route) - routeDuration(right.route))
+  return eligible[0].route.id
+}
+
+export function rerouteId(routes: ChoiceRoute[], weights: Array<number | null> | null, currentId: string) {
+  if (!weights || weights.length !== routes.length) return null
+  const currentIndex = routes.findIndex((route) => route.id === currentId)
+  const currentWeight = currentIndex < 0 ? null : weights[currentIndex]
+  if (currentWeight === null || !Number.isFinite(currentWeight)) return null
+  const eligible = eligibleWeights(routes, weights).filter(
+    (item) => item.route.id !== currentId && item.weight < currentWeight,
+  )
+  if (!eligible.length) return null
+  eligible.sort((left, right) => left.weight - right.weight || routeDuration(left.route) - routeDuration(right.route))
+  return eligible[0].route.id
+}
+
+export function comparisonIsCurrent(
+  requestId: number,
+  activeRequestId: number,
+  requestPreference: string,
+  activePreference: string,
+) {
+  return requestId === activeRequestId && requestPreference === activePreference
+}
+
 const ROUTE_SUMMARY_LIMIT = 5
 const SEGMENT_CATEGORY_LIMIT = 3
 
