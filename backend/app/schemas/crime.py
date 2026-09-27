@@ -197,6 +197,7 @@ class RouteExposureResponse(BaseModel):
     radius_m: float
     coverage: Coverage
     segments: list[ExposureSegment]
+    route_categories: list[ExposureCategoryCount]
 
 
 class AlongRouteResponse(BaseModel):

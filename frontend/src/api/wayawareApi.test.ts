@@ -183,6 +183,10 @@ describe('wayawareApi', () => {
           detail: 'seven categories',
           categories: [{ ky_cd: 109, ofns_desc: 'GRAND LARCENY' }],
         },
+        route_categories: [
+          { ky_cd: 106, ofns_desc: 'FELONY ASSAULT', count: 8 },
+          { ky_cd: 109, ofns_desc: 'GRAND LARCENY', count: 140 },
+        ],
         segments: [
           {
             id: '0',
@@ -213,6 +217,10 @@ describe('wayawareApi', () => {
       categories: [{ kyCd: 109, offense: 'GRAND LARCENY', count: 140 }],
     })
     expect(result.segments[0]).not.toHaveProperty('score')
+    expect(result.routeCategories).toEqual([
+      { kyCd: 106, offense: 'FELONY ASSAULT', count: 8 },
+      { kyCd: 109, offense: 'GRAND LARCENY', count: 140 },
+    ])
   })
 
   it('lets an aborted historical-report request reject as an abort', async () => {

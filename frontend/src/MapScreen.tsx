@@ -6,32 +6,26 @@ import PlaceSuggestions from './components/routing/PlaceSuggestions'
 import RoutePanel from './components/routing/RoutePanel'
 import TravelModeSelector from './components/routing/TravelModeSelector'
 import { ROUTE_HIT_LAYER_ID, fitRoute, segmentIdFromClick, setRouteSegments } from './map/routeLayer'
+import { formatAppliedWindow } from './map/historicalReports'
 import {
-  applyHistoricalReportError,
-  applyHistoricalReportResponse,
-  beginHistoricalReportRequest,
-  formatAppliedWindow,
-  reportsForRoute,
-  formatStoredReportDate,
-  idleHistoricalReports,
-} from './map/historicalReports'
-import {
+  ROUTE_SUMMARY_CONTEXT,
+  ROUTE_SUMMARY_LABEL,
   SEGMENT_DISTANCE_LABEL,
   SEGMENT_EXPLANATION,
   ZERO_SEGMENT_MESSAGE,
   applyExposureError,
   applyExposureResponse,
   beginExposureRequest,
+  displayRouteCategories,
   exposureForRoute,
   exposureLevelLabel,
   idleExposure,
 } from './map/routeExposure'
 import { useRoutePlaces } from './routing/usePlaceSearch'
-import { requestAlongRoute, requestRouteExposure, requestRoutes } from './api/wayawareApi'
-import type { ExposureSegment, ExposureState, HistoricalReport, HistoricalReportState, RouteAlternative, RouteSafety, TravelMode } from './types/api'
+import { requestRouteExposure, requestRoutes } from './api/wayawareApi'
+import type { ExposureSegment, ExposureState, RouteAlternative, RouteSafety, TravelMode } from './types/api'
 
 const MANHATTAN = { lat: 40.7549, lng: -73.9857 }
-const HISTORICAL_MARKER = '#334155'
 const outfit = { fontFamily: 'Outfit, sans-serif' }
 const inter = { fontFamily: 'Inter, sans-serif' }
 
@@ -45,17 +39,6 @@ function chooseRoute(list: RouteAlternative[], preference: RouteSafety) {
 
 function isInNyc(lat: number, lng: number) {
   return lat > 40.48 && lat < 40.93 && lng > -74.28 && lng < -73.68
-}
-
-function historicalMarkerHtml(selected: boolean) {
-  const ring = selected
-    ? 'box-shadow:0 0 0 4px rgba(255,255,255,.85), 0 6px 14px rgba(0,0,0,.4);'
-    : 'box-shadow:0 6px 14px rgba(0,0,0,.35);'
-  return `<div style="width:28px;height:28px;border-radius:999px;background:${HISTORICAL_MARKER};border:2px solid white;cursor:pointer;${ring}"></div>`
-}
-
-function clusterHtml(count: number) {
-  return `<div style="width:36px;height:36px;border-radius:999px;background:#0c1630;color:white;border:2px solid white;display:flex;align-items:center;justify-content:center;font-family:Outfit,sans-serif;font-weight:700;font-size:14px;box-shadow:0 8px 18px rgba(0,0,0,.45)">${count}</div>`
 }
 
 function userHtml() {
@@ -75,14 +58,14 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'ready' | 'empty' | 'error'>('idle')
   const [routeAttempt, setRouteAttempt] = useState(0)
-  const [reports, setReports] = useState<HistoricalReportState>(idleHistoricalReports)
+  const [exposureAttempt, setExposureAttempt] = useState(0)
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const [exposure, setExposure] = useState<ExposureState>(idleExposure)
   const [user, setUser] = useState(MANHATTAN)
   const [mapReady, setMapReady] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const ignoreMapClick = useRef(false)
-  const reportRequestId = useRef(0)
   const exposureRequestId = useRef(0)
 
   useEffect(() => {
@@ -102,10 +85,9 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   }
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
-  const visibleReports = reportsForRoute(reports, selectedRoute?.id ?? null)
   const visibleExposure = exposureForRoute(exposure, selectedRoute?.id ?? null)
-  const selected = visibleReports.reports.find((report) => report.id === visibleReports.selectedId) ?? null
   const selectedSegment = visibleExposure.segments.find((segment) => segment.id === visibleExposure.selectedId) ?? null
+  const summaryVisible = summaryOpen && visibleExposure.routeId === selectedRoute?.id
   const selectedPlaceAttribution = places.destination.place?.attribution || places.origin.place?.attribution || null
 
   useEffect(() => {
@@ -145,30 +127,8 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
   }, [routePreference, routes])
 
   useEffect(() => {
-    const route = selectedRoute
-    const geometry = route?.geometry
-    if (!route || !geometry) {
-      const requestId = reportRequestId.current + 1
-      reportRequestId.current = requestId
-      setReports({ ...idleHistoricalReports, requestId })
-      return
-    }
-    const requestId = reportRequestId.current + 1
-    reportRequestId.current = requestId
-    const controller = new AbortController()
-    setReports(beginHistoricalReportRequest(requestId, route.id))
-    requestAlongRoute(geometry, controller.signal)
-      .then((response) => {
-        setReports((current) => applyHistoricalReportResponse(current, requestId, response))
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
-        setReports((current) => applyHistoricalReportError(current, requestId))
-      })
-    return () => {
-      controller.abort()
-    }
-  }, [selectedRoute])
+    setSummaryOpen(false)
+  }, [selectedRoute?.id])
 
   useEffect(() => {
     const route = selectedRoute
@@ -194,7 +154,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     return () => {
       controller.abort()
     }
-  }, [selectedRoute])
+  }, [selectedRoute, exposureAttempt])
 
   function recenter() {
     const map = mapRef.current
@@ -229,7 +189,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           ignoreMapClick.current = false
           return
         }
-        setReports((current) => ({ ...current, selectedId: null }))
+        setSummaryOpen(false)
         setExposure((current) => ({ ...current, selectedId: null }))
       })
       map.once('load', () => {
@@ -240,7 +200,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
             const segmentId = segmentIdFromClick(event)
             if (!segmentId) return
             ignoreMapClick.current = true
-            setReports((current) => ({ ...current, selectedId: null }))
+            setSummaryOpen(false)
             setExposure((current) =>
               current.status === 'ready' ? { ...current, selectedId: segmentId } : current,
             )
@@ -279,32 +239,6 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
     const place = () => {
       markers.forEach((marker) => marker.remove())
       markers.length = 0
-      for (const group of clusterReports(visibleReports.reports, map)) {
-        const lat = group.reduce((sum, item) => sum + item.latitude, 0) / group.length
-        const lng = group.reduce((sum, item) => sum + item.longitude, 0) / group.length
-        const element = document.createElement('div')
-        if (group.length > 1) {
-          element.innerHTML = clusterHtml(group.length)
-          element.setAttribute('role', 'button')
-          element.setAttribute('aria-label', `${group.length} historical reports`)
-        } else {
-          const report = group[0]
-          element.innerHTML = historicalMarkerHtml(report.id === visibleReports.selectedId)
-          element.setAttribute('role', 'button')
-          element.setAttribute('aria-label', `Historical ${report.offense}`)
-        }
-        element.addEventListener('click', (event) => {
-          event.stopPropagation()
-          ignoreMapClick.current = true
-          if (group.length > 1) {
-            map.flyTo({ center: [lng, lat], zoom: Math.min(map.getZoom() + 2, 16), duration: 450 })
-            return
-          }
-          setReports((current) => ({ ...current, selectedId: group[0].id }))
-        })
-        markers.push(new maplibregl.Marker({ element, anchor: 'center' }).setLngLat([lng, lat]).addTo(map))
-      }
-
       const userElement = document.createElement('div')
       userElement.innerHTML = userHtml()
       markers.push(
@@ -318,7 +252,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
       map.off('moveend', place)
       markers.forEach((marker) => marker.remove())
     }
-  }, [mapReady, visibleReports.reports, visibleReports.selectedId, user])
+  }, [mapReady, user])
 
   useEffect(() => {
     const map = mapRef.current
@@ -437,23 +371,23 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           onClick={recenter}
           aria-label="Recenter on your location"
           className={`pointer-events-auto absolute right-3 flex size-12 items-center justify-center rounded-full border border-[var(--wa-line)] bg-[var(--wa-card)] text-[#3b82f6] shadow-[var(--wa-float-shadow)] transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none ${
-            selected || selectedSegment ? 'bottom-72' : ''
+            summaryVisible || selectedSegment ? 'bottom-72' : ''
           }`}
           style={
-            selected || selectedSegment
+            summaryVisible || selectedSegment
               ? undefined
               : {
                   bottom:
                     routeStatus === 'idle'
                       ? 'max(1.5rem, env(safe-area-inset-bottom, 0px))'
-                      : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 3.25rem)',
+                      : 'calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 4.75rem)',
                 }
           }
         >
           <LocateIcon />
         </button>
 
-        {selectedSegment && visibleExposure.appliedWindow && (
+        {selectedSegment && !summaryVisible && visibleExposure.appliedWindow && (
           <SegmentSummary
             key={selectedSegment.id}
             segment={selectedSegment}
@@ -462,20 +396,31 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
           />
         )}
 
-        {selected && !selectedSegment && (
-          <IncidentSheet key={selected.id} report={selected} onClose={() => setReports((current) => ({ ...current, selectedId: null }))} />
+        {summaryVisible && (
+          <RouteSummary
+            status={visibleExposure.status}
+            categories={displayRouteCategories(visibleExposure.routeCategories)}
+            windowLabel={visibleExposure.appliedWindow ? formatAppliedWindow(visibleExposure.appliedWindow) : null}
+            coverage={visibleExposure.coverage?.detail ?? null}
+            onClose={() => setSummaryOpen(false)}
+            onRetry={() => setExposureAttempt((attempt) => attempt + 1)}
+          />
         )}
 
-        {!selected && !selectedSegment && (
+        {!summaryVisible && !selectedSegment && (
           <RoutePanel
             status={routeStatus}
             routes={routes}
             selectedId={selectedRouteId}
             onRetry={() => setRouteAttempt((attempt) => attempt + 1)}
+            onOpenSummary={() => {
+              setExposure((current) => ({ ...current, selectedId: null }))
+              setSummaryOpen(true)
+            }}
           />
         )}
 
-        {!selected && (
+        {!summaryVisible && !selectedSegment && (
         <p className="pointer-events-auto absolute bottom-1 left-2 text-[9px] text-[#3c4043]/70" style={inter}>
           <a className="underline-offset-2 hover:text-[#3c4043]" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
             © OpenStreetMap
@@ -552,7 +497,21 @@ function SegmentSummary({
   )
 }
 
-function IncidentSheet({ report, onClose }: { report: HistoricalReport; onClose: () => void }) {
+function RouteSummary({
+  status,
+  categories,
+  windowLabel,
+  coverage,
+  onClose,
+  onRetry,
+}: {
+  status: ExposureState['status']
+  categories: ExposureSegment['categories']
+  windowLabel: string | null
+  coverage: string | null
+  onClose: () => void
+  onRetry: () => void
+}) {
   const [shown, setShown] = useState(false)
 
   useEffect(() => {
@@ -563,43 +522,60 @@ function IncidentSheet({ report, onClose }: { report: HistoricalReport; onClose:
   return (
     <div
       role="dialog"
-      aria-label={`Historical ${report.offense}`}
-      className={`pointer-events-auto absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border border-b-0 border-[var(--wa-line)] bg-[var(--wa-card)] px-5 pt-5 pb-7 shadow-[var(--wa-sheet-shadow)] transition-transform duration-300 ease-out ${
+      aria-label={ROUTE_SUMMARY_LABEL}
+      className={`pointer-events-auto absolute z-20 border border-[var(--wa-line)] bg-[var(--wa-card)] px-5 pt-5 pb-6 shadow-[var(--wa-sheet-shadow)] transition-transform duration-300 ease-out max-[479px]:inset-x-0 max-[479px]:bottom-0 max-[479px]:rounded-t-3xl max-[479px]:border-b-0 min-[480px]:inset-x-3 min-[480px]:bottom-3 min-[480px]:rounded-3xl ${
         shown ? 'translate-y-0' : 'translate-y-full'
       }`}
     >
       <button
         type="button"
         onClick={onClose}
-        aria-label="Close report"
+        aria-label="Close summary"
         className="absolute top-3 right-3 flex size-9 items-center justify-center rounded-full text-[var(--wa-icon-faint)] hover:bg-[var(--wa-hover-strong)] focus-visible:ring-2 focus-visible:ring-[#3b82f6] focus-visible:outline-none"
       >
         <CloseIcon />
       </button>
-
-      <div className="flex flex-col items-center text-center">
-        <span
-          className="size-14 rounded-full border-2 border-white shadow-[0_6px_14px_rgba(0,0,0,0.28)]"
-          style={{ background: HISTORICAL_MARKER }}
-        />
-        <h2 className="mt-3 text-[1.55rem] leading-tight font-bold text-[var(--wa-text)]" style={outfit}>
-          {report.offense}
-        </h2>
-        {report.description && (
-          <p className="mt-2 text-[0.92rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
-            {report.description}
-          </p>
-        )}
-        <p className="mt-2 text-[0.92rem] text-[var(--wa-text-muted)]" style={inter}>
-          {Math.round(report.distanceMeters)} m from the route
+      <h2 className="pr-10 text-[1.25rem] leading-tight font-bold text-[var(--wa-text)]" style={outfit}>
+        {ROUTE_SUMMARY_LABEL}
+      </h2>
+      {status === 'loading' && (
+        <p className="mt-3 text-[0.9rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+          Loading route summary…
         </p>
-        <p className="mt-1 text-[0.92rem] text-[var(--wa-text-muted)]" style={inter}>
-          Stored date {formatStoredReportDate(report.storedOccurredAt)}. Time of day unverified.
+      )}
+      {status === 'error' && (
+        <button type="button" onClick={onRetry} className="mt-3 text-left text-[0.9rem] font-semibold text-[var(--wa-text)]" style={outfit}>
+          Unable to load the route summary. Try again.
+        </button>
+      )}
+      {status === 'ready' && categories.length === 0 && (
+        <p className="mt-3 text-[0.9rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
+          {ZERO_SEGMENT_MESSAGE}
         </p>
-        <p className="mt-1 text-[0.68rem] font-semibold tracking-[0.14em] text-[var(--wa-text-muted)] uppercase" style={outfit}>
-          Historical
+      )}
+      {status === 'ready' && categories.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-1.5">
+          {categories.map((category) => (
+            <li key={category.kyCd} className="flex items-baseline justify-between gap-3 text-[0.9rem]" style={inter}>
+              <span className="text-[var(--wa-text)]">{category.offense}</span>
+              <span className="shrink-0 font-semibold text-[var(--wa-text)]">{category.count.toLocaleString('en-US')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 text-[0.78rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
+        {ROUTE_SUMMARY_CONTEXT}
+      </p>
+      {windowLabel && (
+        <p className="mt-1 text-[0.78rem] text-[var(--wa-text-muted)]" style={inter}>
+          {windowLabel}
         </p>
-      </div>
+      )}
+      {coverage && (
+        <p className="mt-1 text-[0.78rem] leading-snug text-[var(--wa-text-muted)]" style={inter}>
+          {coverage}
+        </p>
+      )}
     </div>
   )
 }
@@ -656,29 +632,6 @@ function googleColor(id: string, type: 'fill' | 'line') {
   if (/building/.test(id) && type === 'fill') return '#eeeeee'
   if (/landuse|landcover/.test(id) && type === 'fill' && !/park|grass|wood|water/.test(id)) return '#f4f4f4'
   return null
-}
-
-function clusterReports(items: HistoricalReport[], map: maplibregl.Map) {
-  const used = new Set<string>()
-  const groups: HistoricalReport[][] = []
-  for (const report of items) {
-    if (used.has(report.id)) continue
-    const point = map.project([report.longitude, report.latitude])
-    const group = [report]
-    used.add(report.id)
-    for (const other of items) {
-      if (used.has(other.id)) continue
-      const otherPoint = map.project([other.longitude, other.latitude])
-      const dx = point.x - otherPoint.x
-      const dy = point.y - otherPoint.y
-      if (dx * dx + dy * dy < 4 * 4) {
-        group.push(other)
-        used.add(other.id)
-      }
-    }
-    groups.push(group)
-  }
-  return groups
 }
 
 function DestinationPin() {

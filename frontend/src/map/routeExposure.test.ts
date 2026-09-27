@@ -4,6 +4,7 @@ import {
   applyExposureError,
   applyExposureResponse,
   beginExposureRequest,
+  displayRouteCategories,
   exposureForRoute,
 } from './routeExposure'
 
@@ -28,6 +29,7 @@ function result(id: string): RouteExposureResult {
     radiusMeters: 50,
     coverage: { detail: 'seven categories', categories: [] },
     segments: [segment(id)],
+    routeCategories: [{ kyCd: 109, offense: 'GRAND LARCENY', count: 12 }],
   }
 }
 
@@ -39,7 +41,28 @@ describe('route exposure state', () => {
 
     expect(next.status).toBe('loading')
     expect(next.segments).toEqual([])
+    expect(next.routeCategories).toEqual([])
     expect(next.selectedId).toBeNull()
+  })
+
+  it('keeps the five highest counts and shows them alphabetically', () => {
+    const shown = displayRouteCategories([
+      { kyCd: 110, offense: 'GRAND LARCENY OF MOTOR VEHICLE', count: 1 },
+      { kyCd: 104, offense: 'RAPE', count: 1 },
+      { kyCd: 101, offense: 'MURDER & NON-NEGL. MANSLAUGHTER', count: 1 },
+      { kyCd: 109, offense: 'GRAND LARCENY', count: 4 },
+      { kyCd: 106, offense: 'FELONY ASSAULT', count: 4 },
+      { kyCd: 105, offense: 'ROBBERY', count: 2 },
+      { kyCd: 107, offense: 'BURGLARY', count: 2 },
+    ])
+
+    expect(shown.map((category) => category.offense)).toEqual([
+      'BURGLARY',
+      'FELONY ASSAULT',
+      'GRAND LARCENY',
+      'MURDER & NON-NEGL. MANSLAUGHTER',
+      'ROBBERY',
+    ])
   })
 
   it('ignores a stale assessment', () => {
@@ -50,6 +73,7 @@ describe('route exposure state', () => {
     expect(stale).toBe(current)
     expect(staleError).toBe(current)
     expect(current.segments.map((item) => item.id)).toEqual(['new'])
+    expect(current.routeCategories).toEqual([{ kyCd: 109, offense: 'GRAND LARCENY', count: 12 }])
   })
 
   it('keeps an empty or failed assessment uncolored', () => {

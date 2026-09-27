@@ -11,6 +11,7 @@ from app.application.exposure import (
     LOWER_BELOW,
     exposure_level,
     exposure_score,
+    route_categories,
     split_route,
     summarize_segments,
     top_categories,
@@ -115,6 +116,36 @@ def test_counts_a_complaint_once_and_breaks_category_ties_by_code():
     assert segment.level == "lower"
 
 
+def test_route_categories_count_a_shared_complaint_once():
+    pieces = split_route([[-73.98, 40.75], offset_north(-73.98, 40.75, 200)])
+    assert len(pieces) == 2
+    rows = [
+        {"id": 0, "source": "nypd_complaint", "source_id": "shared", "ky_cd": 109},
+        {"id": 1, "source": "nypd_complaint", "source_id": "shared", "ky_cd": 105},
+        {"id": 0, "source": "nypd_complaint", "source_id": "a", "ky_cd": 106},
+        {"id": 0, "source": "nypd_complaint", "source_id": "b", "ky_cd": 106},
+        {"id": 1, "source": "nypd_complaint", "source_id": "c", "ky_cd": 109},
+        {"id": 0, "source": "nypd_complaint", "source_id": "d", "ky_cd": 109},
+        {"id": 1, "source": "nypd_complaint", "source_id": "e", "ky_cd": 107},
+        {"id": 0, "source": "nypd_complaint", "source_id": "f", "ky_cd": 107},
+        {"id": 1, "source": "nypd_complaint", "source_id": "g", "ky_cd": 101},
+        {"id": 0, "source": "nypd_complaint", "source_id": "h", "ky_cd": 104},
+        {"id": 1, "source": "nypd_complaint", "source_id": "i", "ky_cd": 110},
+    ]
+    categories = route_categories(pieces, rows)
+    # The shared complaint keeps code 105, so grand larceny stays at 2.
+    # Equal counts keep the lower offense code, which drops 105 and 110.
+    assert [(item.ky_cd, item.count) for item in categories] == [
+        (106, 2),
+        (107, 2),
+        (109, 2),
+        (101, 1),
+        (104, 1),
+    ]
+    segments = summarize_segments(pieces, rows)
+    assert sum(segment.total_count for segment in segments) == 11
+
+
 def test_overlap_stays_on_each_segment():
     pieces = split_route(
         [[-73.98, 40.75], offset_north(-73.98, 40.75, 200)]
@@ -181,6 +212,10 @@ def test_assessed_route_hides_the_numeric_score(client, monkeypatch):
     assert segment["level"] == "lower"
     assert segment["categories"][0]["ky_cd"] == 105
     assert segment["categories"][0]["count"] == 1
+    assert [(item["ky_cd"], item["count"]) for item in body["route_categories"]] == [
+        (105, 1),
+        (109, 1),
+    ]
 
 
 def test_database_failure_does_not_return_colors(client, monkeypatch):

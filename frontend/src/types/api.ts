@@ -106,6 +106,7 @@ export type RouteExposureResult = {
   radiusMeters: number
   coverage: HistoricalReportCoverage
   segments: ExposureSegment[]
+  routeCategories: ExposureCategoryCount[]
 }
 
 export type ExposureStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -115,6 +116,7 @@ export type ExposureState = {
   routeId: string | null
   status: ExposureStatus
   segments: ExposureSegment[]
+  routeCategories: ExposureCategoryCount[]
   selectedId: string | null
   appliedWindow: HistoricalReportWindow | null
   coverage: HistoricalReportCoverage | null

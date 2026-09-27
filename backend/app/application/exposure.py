@@ -63,6 +63,7 @@ TARGET_SEGMENT_M = 100.0
 LOWER_BELOW = 80.0
 HIGHER_AT = 400.0
 TOP_CATEGORY_LIMIT = 3
+ROUTE_CATEGORY_LIMIT = 5
 # Extra ground distance around each piece so the latitude/longitude prefilter
 # contains the 50 m geography corridor. ST_DWithin is still the exact test.
 # Twenty-five meters matched the wider proved corridor box on real walking
@@ -111,6 +112,37 @@ def top_categories(counts: dict[int, int]) -> list[tuple[int, int]]:
     """Rank by complaint count, then by ascending offense code."""
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     return [(ky_cd, count) for ky_cd, count in ranked[:TOP_CATEGORY_LIMIT] if count > 0]
+
+
+def route_categories(
+    pieces: list[RoutePiece],
+    rows: list[dict[str, Any]],
+) -> list[ExposureCategoryCount]:
+    """Count each complaint once along the full route.
+
+    Neighboring corridors can contain the same complaint. Segment totals keep
+    that overlap. This list does not. The lower offense code wins when one
+    complaint has more than one included code. Rank is count, then code.
+    """
+    unique: dict[tuple[str, str], int] = {}
+    for choices in _one_category_per_complaint(pieces, rows):
+        for key, ky_cd in choices.items():
+            current = unique.get(key)
+            if current is None or ky_cd < current:
+                unique[key] = ky_cd
+    counts: dict[int, int] = {}
+    for ky_cd in unique.values():
+        counts[ky_cd] = counts.get(ky_cd, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [
+        ExposureCategoryCount(
+            ky_cd=ky_cd,
+            ofns_desc=CATEGORY_NAMES[ky_cd],
+            count=count,
+        )
+        for ky_cd, count in ranked[:ROUTE_CATEGORY_LIMIT]
+        if count > 0
+    ]
 
 
 def split_route(coordinates: list[list[float]]) -> list[RoutePiece]:
@@ -206,6 +238,7 @@ def assess_route(
             detail=COVERAGE_DETAIL,
         ),
         segments=summarize_segments(pieces, rows),
+        route_categories=route_categories(pieces, rows),
     )
 
 

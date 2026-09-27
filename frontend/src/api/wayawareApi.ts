@@ -5,6 +5,7 @@ import {
   HISTORICAL_REPORT_WINDOW,
   type HistoricalReport,
   type HistoricalReportResult,
+  type ExposureCategoryCount,
   type ExposureLevel,
   type ExposureSegment,
   type LineStringGeometry,
@@ -446,8 +447,18 @@ function parseRouteExposure(data: unknown): RouteExposureResult {
         offense: readString(category, [/ofns_desc/i]) ?? 'Historical report',
       })),
     },
+    routeCategories: parseCategoryCounts(data.route_categories),
     segments: data.segments.filter(isRecord).map(parseExposureSegment),
   }
+}
+
+function parseCategoryCounts(value: unknown): ExposureCategoryCount[] {
+  if (!Array.isArray(value)) throw new WayAwareApiError('Route exposure was not returned.')
+  return value.filter(isRecord).map((category) => ({
+    kyCd: readNumber(category, [/ky_cd/i]) ?? 0,
+    offense: readString(category, [/ofns_desc/i]) ?? 'Historical report',
+    count: readNumber(category, [/^count$/i]) ?? 0,
+  }))
 }
 
 function parseExposureSegment(row: Record<string, unknown>): ExposureSegment {
