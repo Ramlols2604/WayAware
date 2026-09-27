@@ -291,7 +291,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
               <DestinationPin />
             </div>
             <div className="flex min-w-0 flex-1 flex-col">
-              <div className="relative">
+              <div className={`relative ${places.origin.status !== 'idle' ? 'z-20' : ''}`}>
                 <input
                   value={places.origin.text}
                   onChange={(event) => places.origin.setText(event.target.value)}
@@ -307,7 +307,7 @@ export default function MapScreen({ onOpenSettings, onBack, routePreference }: M
                   onRetry={places.origin.retry}
                 />
               </div>
-              <div className="relative">
+              <div className={`relative ${places.destination.status !== 'idle' ? 'z-20' : ''}`}>
                 <input
                   value={places.destination.text}
                   onChange={(event) => places.destination.setText(event.target.value)}

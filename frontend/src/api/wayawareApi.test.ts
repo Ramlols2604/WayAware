@@ -97,6 +97,7 @@ describe('wayawareApi', () => {
 
     expect(suggestions).toHaveLength(2)
     expect(suggestions.every((s) => s.attribution === '© Mapbox search')).toBe(true)
+    expect(suggestions[0]).toMatchObject({ label: 'Place A', subtitle: 'NYC' })
   })
 
   it('posts the full route line and reads capped historical reports', async () => {

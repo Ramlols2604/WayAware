@@ -213,8 +213,8 @@ function extractSuggestions(data: unknown): PlaceSuggestion[] {
   for (const row of rows) {
     const mapboxId = readString(row, [/mapbox[_ ]?id/i, /^id$/i])
     if (!mapboxId) continue
-    const label = readString(row, [/full[_ ]?address/i, /^name$/i, /place[_ ]?formatted/i, /place[_ ]?name/i, /^label$/i, /^text$/i]) ?? mapboxId
-    const subtitle = readString(row, [/place[_ ]?formatted/i, /^address$/i, /description/i]) ?? ''
+    const label = readString(row, [/^name$/i, /place[_ ]?name/i, /^label$/i, /^text$/i, /full[_ ]?address/i]) ?? mapboxId
+    const subtitle = readString(row, [/full[_ ]?address/i, /place[_ ]?formatted/i, /^address$/i, /description/i]) ?? ''
     suggestions.push({ mapboxId, label, subtitle: subtitle === label ? '' : subtitle, attribution })
   }
   return suggestions
