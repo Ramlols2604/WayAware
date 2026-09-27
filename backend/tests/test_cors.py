@@ -26,6 +26,24 @@ def test_routes_preflight_allows_frontend_origin_and_content_type():
     assert "access-control-allow-credentials" not in response.headers
 
 
+def test_crime_along_route_preflight_allows_frontend_origin_and_content_type():
+    with TestClient(app) as client:
+        response = client.options(
+            "/crime/along-route",
+            headers={
+                "Origin": FRONTEND_ORIGIN,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == FRONTEND_ORIGIN
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "content-type" in response.headers["access-control-allow-headers"].lower()
+    assert "access-control-allow-credentials" not in response.headers
+
+
 def test_places_search_preflight_allows_frontend_origin():
     with TestClient(app) as client:
         response = client.options(
