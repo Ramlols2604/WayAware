@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-navy-950: #030818;
+  --color-navy-900: #060f28;
+  --color-navy-800: #0a1942;
+  --color-signal-blue: #3b82f6;
+  --color-signal-blue-bright: #60a5fa;
+}
+
+:root,
+[data-theme='dark'] {
+  --wa-stage: #01040f;
+  --wa-bg: #030818;
+  --wa-card: #0c1630;
+  --wa-border: #2c3a52;
+  --wa-option-border: #33415c;
+  --wa-text: #ffffff;
+  --wa-text-muted: #9ca3af;
+  --wa-label: #8b95a8;
+  --wa-line: rgba(255, 255, 255, 0.1);
+  --wa-divider: rgba(255, 255, 255, 0.25);
+  --wa-hover: rgba(255, 255, 255, 0.05);
+  --wa-hover-strong: rgba(255, 255, 255, 0.1);
+  --wa-control: #6b7280;
+  --wa-toggle-off: #3a4458;
+  --wa-icon-bg: #13203a;
+  --wa-checkbox-bg: #10192e;
+  --wa-disabled-bg: #121a30;
+  --wa-disabled-text: rgba(255, 255, 255, 0.35);
+  --wa-icon-soft: rgba(255, 255, 255, 0.8);
+  --wa-icon-faint: rgba(255, 255, 255, 0.7);
+  --wa-ring: rgba(255, 255, 255, 0.1);
+  --wa-float-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --wa-card-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --wa-sheet-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  --wa-pin-hole: #0c1630;
+  --wa-gear: #e5e7eb;
+}
+
+[data-theme='light'] {
+  --wa-stage: #e7e9ee;
+  --wa-bg: #f3f4f6;
+  --wa-card: #ffffff;
+  --wa-border: #e5e7eb;
+  --wa-option-border: #e5e7eb;
+  --wa-text: #0b1220;
+  --wa-text-muted: #6b7280;
+  --wa-label: #6b7280;
+  --wa-line: #e5e7eb;
+  --wa-divider: #d1d5db;
+  --wa-hover: rgba(11, 18, 32, 0.04);
+  --wa-hover-strong: rgba(11, 18, 32, 0.06);
+  --wa-control: #c5cad3;
+  --wa-toggle-off: #d1d5db;
+  --wa-icon-bg: #eef0f4;
+  --wa-checkbox-bg: #ffffff;
+  --wa-disabled-bg: #e5e7eb;
+  --wa-disabled-text: rgba(11, 18, 32, 0.35);
+  --wa-icon-soft: rgba(11, 18, 32, 0.8);
+  --wa-icon-faint: rgba(11, 18, 32, 0.7);
+  --wa-ring: rgba(11, 18, 32, 0.08);
+  --wa-float-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --wa-card-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  --wa-sheet-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
+  --wa-pin-hole: #ffffff;
+  --wa-gear: #0b1220;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+.maplibregl-map {
+  height: 100%;
+  width: 100%;
+  background: #f8f8f8;
+  font-family: Inter, sans-serif;
+}
+
+.maplibregl-canvas {
+  outline: none;
+}
